@@ -25,7 +25,16 @@ do only what I ask in the current prompt.
 - Scheduler gets tasks ONLY through `owner.get_all_tasks()`. Never read `pet.tasks` inside Scheduler.
 - Recurrence: `Task.mark_complete()` sets completed and returns `next_occurrence()`
   (DAILY +1 day, WEEKLY +7 days, via timedelta) or None for ONCE.
-  `Scheduler.mark_task_complete()` adds the new task to the right pet.
+  `Scheduler.mark_task_complete(pet_name, description, time)` adds the new task to the
+  right pet and returns it, or None (one-time task, or no match).
+- Task identity: a task is found by pet + description + time. Because a recurring task's
+  next occurrence has the same description and time, `remove_task()` and
+  `mark_task_complete()` act on the earliest-due INCOMPLETE match. If nothing matches they
+  return False / None and never raise.
+- `Pet.add_task()` raises ValueError if the pet already has a task with the same
+  description, time, AND due_date (no exact duplicates).
+- Methods that can find nothing return Optional: `get_pet`, `latest_reading`, and
+  `sync_collar` (None when no collar is paired).
 - `detect_conflicts()` returns warning strings and never raises. It checks exact
   same date + time only (a documented tradeoff).
 ## Daily plan (the README scenario: track tasks, respect constraints, explain the plan)
@@ -65,7 +74,10 @@ do only what I ask in the current prompt.
   the factors `score()` used, nothing invented.
 - `MockPayment.charge()` never asks for or stores card details. It returns True when amount > 0.
 - `Cart.checkout()` raises ValueError on an empty cart. Otherwise it charges, creates an
-  Order (delivery = placed_on + 3 days), appends it to `owner.orders`, and clears the cart.
+  Order (delivery = placed_on + 3 days) with `items=list(self.items)` (a copy, so the
+  cart and the order never share a list), appends it to `owner.orders`, and clears the cart.
+- `Order.advance_status()` moves PLACED → SHIPPED → DELIVERED and returns True. At
+  DELIVERED or CANCELLED it returns False. It never raises.
 - `Order.to_delivery_task()` makes a DELIVERY task on the delivery date.
 
 ## Code style

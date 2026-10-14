@@ -1,15 +1,258 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
+    direction LR
 
-    class ClassName {
-        +type attribute
-        +method() returnType
+    namespace Core_Scheduling {
+        class Owner {
+            +str name
+            +str email
+            +str address
+            +int available_minutes
+            +str day_start
+            +str day_end
+            +list~TaskType~ preferred_types
+            +list~Pet~ pets
+            +Cart cart
+            +list~Order~ orders
+            +add_pet(pet: Pet) None
+            +remove_pet(name: str) bool
+            +get_pet(name: str) Optional~Pet~
+            +get_all_tasks() list~Task~
+            +save_to_json(path: str) None
+            +load_from_json(path: str) Owner$
+        }
+
+        class Pet {
+            <<dataclass>>
+            +str name
+            +str species
+            +str breed
+            +float age_years
+            +float weight_kg
+            +list~Task~ tasks
+            +HealthProfile health
+            +Optional~SmartCollar~ collar
+            +add_task(task: Task) None
+            +remove_task(description: str, time: str) bool
+            +get_tasks() list~Task~
+            +pair_collar(collar: SmartCollar) None
+            +sync_collar() Optional~HealthReading~
+        }
+
+        class Task {
+            <<dataclass>>
+            +str description
+            +str time
+            +date due_date
+            +TaskType task_type
+            +Frequency frequency
+            +Priority priority
+            +int duration_minutes
+            +bool completed
+            +str pet_name
+            +mark_complete() Optional~Task~
+            +next_occurrence() Optional~Task~
+        }
+
+        class Scheduler {
+            +Owner owner
+            +get_todays_schedule(day: date) list~Task~
+            +sort_by_time(tasks: list~Task~) list~Task~
+            +sort_by_priority(tasks: list~Task~) list~Task~
+            +filter_tasks(pet_name: str, completed: bool) list~Task~
+            +detect_conflicts(day: date) list~str~
+            +mark_task_complete(pet_name: str, description: str, time: str) Optional~Task~
+            +build_daily_plan(day: date) list~Task~
+            +skipped_tasks(day: date) list~Task~
+            +explain_plan(day: date) list~str~
+        }
+
+        class Priority {
+            <<enumeration>>
+            LOW
+            MEDIUM
+            HIGH
+        }
+
+        class Frequency {
+            <<enumeration>>
+            ONCE
+            DAILY
+            WEEKLY
+        }
+
+        class TaskType {
+            <<enumeration>>
+            WALK
+            FEEDING
+            MEDICATION
+            GROOMING
+            ENRICHMENT
+            APPOINTMENT
+            DELIVERY
+        }
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    namespace Health_Tracker {
+        class SmartCollar {
+            +str device_id
+            +int seed
+            +int battery_percent
+            +bool is_paired
+            +read_vitals() HealthReading
+        }
+
+        class HealthProfile {
+            <<dataclass>>
+            +list~str~ conditions
+            +list~str~ allergies
+            +list~Medication~ medications
+            +list~SymptomEntry~ symptoms
+            +list~HealthReading~ readings
+            +add_reading(reading: HealthReading) None
+            +add_medication(med: Medication) None
+            +log_symptom(entry: SymptomEntry) None
+            +latest_reading() Optional~HealthReading~
+            +daily_summary(day: date) dict
+            +check_alerts(species: str) list~str~
+        }
+
+        class HealthReading {
+            <<dataclass>>
+            +datetime timestamp
+            +int heart_rate_bpm
+            +float spo2_percent
+            +float temperature_c
+            +int respiratory_rate
+            +int sleep_score
+            +int steps
+            +float distance_km
+            +int calories_burned
+        }
+
+        class Medication {
+            <<dataclass>>
+            +str name
+            +str dose
+            +list~str~ times
+            +Frequency frequency
+            +date start_date
+            +to_tasks(pet_name: str) list~Task~
+        }
+
+        class SymptomEntry {
+            <<dataclass>>
+            +date logged_on
+            +str description
+            +Severity severity
+        }
+
+        class Severity {
+            <<enumeration>>
+            MILD
+            MODERATE
+            SEVERE
+        }
     }
 
-    ClassName --> AnotherClass : relationship
+    namespace Food_Marketplace {
+        class Marketplace {
+            +list~FoodProduct~ catalog
+            +search(species: str, query: str) list~FoodProduct~
+            +score(product: FoodProduct, pet: Pet) float
+            +recommend_for(pet: Pet, top_n: int) list~FoodProduct~
+            +explain_recommendation(product: FoodProduct, pet: Pet) list~str~
+            +compare(product_ids: list~str~) list~dict~
+        }
+
+        class FoodProduct {
+            <<dataclass>>
+            +str product_id
+            +str brand
+            +str name
+            +str species
+            +str life_stage
+            +float price
+            +float rating
+            +int kcal_per_cup
+            +list~str~ supports
+            +list~str~ allergens
+        }
+
+        class Cart {
+            +list~CartItem~ items
+            +add_item(product: FoodProduct, quantity: int) None
+            +remove_item(product_id: str) bool
+            +total() float
+            +clear() None
+            +checkout(owner: Owner, payment: MockPayment) Order
+        }
+
+        class CartItem {
+            <<dataclass>>
+            +FoodProduct product
+            +int quantity
+            +subtotal() float
+        }
+
+        class Order {
+            <<dataclass>>
+            +str order_id
+            +list~CartItem~ items
+            +float total
+            +OrderStatus status
+            +date placed_on
+            +date delivery_date
+            +str delivery_address
+            +advance_status() bool
+            +to_delivery_task(pet_name: str) Task
+        }
+
+        class MockPayment {
+            +charge(amount: float) bool
+        }
+
+        class OrderStatus {
+            <<enumeration>>
+            PLACED
+            SHIPPED
+            DELIVERED
+            CANCELLED
+        }
+    }
+
+    %% ---------- Core Scheduling ----------
+    Owner "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" Task : has
+    Scheduler "1" o-- "1" Owner : reads tasks via get_all_tasks()
+    Scheduler "1" ..> "0..*" Task : sorts, filters, plans, completes
+    Owner "1" ..> "0..*" TaskType : prefers
+    Task "0..*" ..> "1" Priority : uses
+    Task "0..*" ..> "1" Frequency : uses
+    Task "0..*" ..> "1" TaskType : uses
+
+    %% ---------- Health Tracker ----------
+    Pet "1" *-- "1" HealthProfile : has
+    Pet "1" o-- "0..1" SmartCollar : wears
+    SmartCollar "1" ..> "0..*" HealthReading : creates
+    HealthProfile "1" *-- "0..*" HealthReading : stores
+    HealthProfile "1" *-- "0..*" Medication : tracks
+    HealthProfile "1" *-- "0..*" SymptomEntry : logs
+    Medication "1" ..> "0..*" Task : creates reminders
+    Medication "0..*" ..> "1" Frequency : uses
+    SymptomEntry "0..*" ..> "1" Severity : uses
+
+    %% ---------- Food Marketplace ----------
+    Owner "1" *-- "1" Cart : has
+    Owner "1" *-- "0..*" Order : places
+    Marketplace "1" o-- "0..*" FoodProduct : lists
+    Marketplace "1" ..> "0..*" HealthProfile : reads conditions and allergies
+    Marketplace "1" ..> "0..*" Pet : scores for
+    Cart "1" *-- "0..*" CartItem : contains
+    CartItem "0..*" o-- "1" FoodProduct : refers to
+    Cart "1" ..> "1" MockPayment : pays with
+    Cart "1" ..> "0..*" Order : creates
+    %% Cart and Order never share CartItems: checkout() builds the Order from a copy
+    %% (items=list(self.items)) before clear(), so each CartItem has one owner.
+    Order "1" *-- "1..*" CartItem : contains
+    Order "1" ..> "0..1" Task : creates delivery task
+    Order "0..*" ..> "1" OrderStatus : uses
