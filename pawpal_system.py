@@ -1,14 +1,24 @@
 """PawPal+ logic layer: owners, pets, tasks, scheduling, health tracking, and a food marketplace.
 
-Skeleton generated from diagrams/uml.mmd. Method bodies are not implemented yet.
+Built from diagrams/uml.mmd. Core scheduling is implemented; health and marketplace
+methods are still stubs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import Enum
 from typing import Optional
+
+_HHMM_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _validate_hhmm(value: str, field_name: str) -> None:
+    """Raise ValueError unless value is a zero-padded 24-hour "HH:MM" string."""
+    if not isinstance(value, str) or not _HHMM_PATTERN.match(value):
+        raise ValueError(f"{field_name} must be 24-hour 'HH:MM' (e.g. '07:30'), got {value!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +186,15 @@ class Task:
     completed: bool = False
     pet_name: str = ""
 
+    def __post_init__(self) -> None:
+        """Validate that time is a zero-padded 24-hour "HH:MM" string."""
+        _validate_hhmm(self.time, "time")
+
     def mark_complete(self) -> Optional[Task]:
         """Mark this task done and return its next occurrence, if any."""
-        raise NotImplementedError
+        # Recurrence (next_occurrence) is wired in during Phase 4.
+        self.completed = True
+        return None
 
     def next_occurrence(self) -> Optional[Task]:
         """Return the next copy of a recurring task, or None for a one-time task."""
@@ -198,21 +214,67 @@ class Pet:
     health: HealthProfile = field(default_factory=HealthProfile)
     collar: Optional[SmartCollar] = None
 
+    def __post_init__(self) -> None:
+        """Store species lowercase and keep a private copy of the task list."""
+        self.species = self.species.lower()
+        self.tasks = list(self.tasks)
+
+    def _find_task(self, description: str, time: str) -> Optional[Task]:
+        """Return the earliest-due incomplete task matching description and time."""
+        matches = [
+            t for t in self.tasks
+            if t.description == description and t.time == time and not t.completed
+        ]
+        return min(matches, key=lambda t: t.due_date, default=None)
+
+    def _is_duplicate(self, task: Task, ignore: Optional[Task] = None) -> bool:
+        """Return True if another task has the same description, time, and due_date."""
+        return any(
+            other is not ignore
+            and other.description == task.description
+            and other.time == task.time
+            and other.due_date == task.due_date
+            for other in self.tasks
+        )
+
     def add_task(self, task: Task) -> None:
         """Add a task to this pet and set its pet_name."""
-        raise NotImplementedError
+        if self._is_duplicate(task):
+            raise ValueError(
+                f"{self.name} already has '{task.description}' at {task.time} on {task.due_date}"
+            )
+        task.pet_name = self.name
+        self.tasks.append(task)
 
     def remove_task(self, description: str, time: str) -> bool:
         """Remove the earliest-due incomplete matching task; return True if removed."""
-        raise NotImplementedError
+        task = self._find_task(description, time)
+        if task is None:
+            return False
+        self.tasks.remove(task)
+        return True
 
     def update_task(self, description: str, time: str, changes: dict) -> bool:
         """Replace the earliest-due incomplete match with an edited copy; return False if none."""
-        raise NotImplementedError
+        task = self._find_task(description, time)
+        if task is None:
+            return False
+        try:
+            edited = replace(task, **changes)  # re-runs __post_init__ validation
+        except TypeError as exc:
+            raise ValueError(f"Unknown task field in changes: {exc}") from exc
+        edited.pet_name = self.name
+        if self._is_duplicate(edited, ignore=task):
+            raise ValueError(
+                f"{self.name} already has '{edited.description}' at {edited.time} "
+                f"on {edited.due_date}"
+            )
+        self.tasks[self.tasks.index(task)] = edited
+        return True
 
     def get_tasks(self) -> list[Task]:
         """Return this pet's tasks."""
-        raise NotImplementedError
+        return list(self.tasks)
 
     def add_medication(self, med: Medication) -> None:
         """Track a medication and add its reminder tasks to this pet."""
@@ -241,34 +303,41 @@ class Owner:
         preferred_types: Optional[list[TaskType]] = None,
     ) -> None:
         """Create an owner with contact info and scheduling preferences."""
+        _validate_hhmm(day_start, "day_start")
+        _validate_hhmm(day_end, "day_end")
         self.name: str = name
         self.email: str = email
         self.address: str = address
         self.available_minutes: int = available_minutes
         self.day_start: str = day_start
         self.day_end: str = day_end
-        self.preferred_types: list[TaskType] = (
-            preferred_types if preferred_types is not None else []
-        )
+        self.preferred_types: list[TaskType] = list(preferred_types or [])
         self.pets: list[Pet] = []
         self.cart: Cart = Cart()
         self.orders: list[Order] = []
 
     def add_pet(self, pet: Pet) -> None:
         """Add a pet to this owner."""
-        raise NotImplementedError
+        if self.get_pet(pet.name) is not None:
+            raise ValueError(f"A pet named '{pet.name}' already exists")
+        self.pets.append(pet)
 
     def remove_pet(self, name: str) -> bool:
         """Remove a pet by name; return True if one was removed."""
-        raise NotImplementedError
+        pet = self.get_pet(name)
+        if pet is None:
+            return False
+        self.pets.remove(pet)
+        return True
 
     def get_pet(self, name: str) -> Optional[Pet]:
         """Return the pet with this name, or None if not found."""
-        raise NotImplementedError
+        wanted = name.lower()
+        return next((p for p in self.pets if p.name.lower() == wanted), None)
 
     def get_all_tasks(self) -> list[Task]:
         """Return every task across all of this owner's pets."""
-        raise NotImplementedError
+        return [task for pet in self.pets for task in pet.get_tasks()]
 
     def save_to_json(self, path: str) -> None:
         """Save this owner and all their data to a JSON file."""
@@ -289,7 +358,8 @@ class Scheduler:
 
     def get_todays_schedule(self, day: date) -> list[Task]:
         """Return all tasks due on the given day, sorted by time."""
-        raise NotImplementedError
+        todays = [t for t in self.owner.get_all_tasks() if t.due_date == day]
+        return sorted(todays, key=lambda t: t.time)
 
     def sort_by_time(self, tasks: list[Task]) -> list[Task]:
         """Return the tasks sorted by their HH:MM time."""
