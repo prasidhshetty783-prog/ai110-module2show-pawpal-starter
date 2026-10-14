@@ -34,9 +34,11 @@ classDiagram
             +Optional~SmartCollar~ collar
             +add_task(task: Task) None
             +remove_task(description: str, time: str) bool
+            +update_task(description: str, time: str, changes: dict) bool
             +get_tasks() list~Task~
+            +add_medication(med: Medication) None
             +pair_collar(collar: SmartCollar) None
-            +sync_collar() Optional~HealthReading~
+            +sync_collar(at: datetime) Optional~HealthReading~
         }
 
         class Task {
@@ -59,7 +61,7 @@ classDiagram
             +get_todays_schedule(day: date) list~Task~
             +sort_by_time(tasks: list~Task~) list~Task~
             +sort_by_priority(tasks: list~Task~) list~Task~
-            +filter_tasks(pet_name: str, completed: bool) list~Task~
+            +filter_tasks(pet_name: Optional~str~, completed: Optional~bool~) list~Task~
             +detect_conflicts(day: date) list~str~
             +mark_task_complete(pet_name: str, description: str, time: str) Optional~Task~
             +build_daily_plan(day: date) list~Task~
@@ -99,7 +101,7 @@ classDiagram
             +int seed
             +int battery_percent
             +bool is_paired
-            +read_vitals() HealthReading
+            +read_vitals(at: datetime) HealthReading
         }
 
         class HealthProfile {
@@ -185,7 +187,7 @@ classDiagram
             +remove_item(product_id: str) bool
             +total() float
             +clear() None
-            +checkout(owner: Owner, payment: MockPayment) Order
+            +checkout(owner: Owner, payment: MockPayment, pet_name: str, today: date) Order
         }
 
         class CartItem {
@@ -217,7 +219,6 @@ classDiagram
             PLACED
             SHIPPED
             DELIVERED
-            CANCELLED
         }
     }
 

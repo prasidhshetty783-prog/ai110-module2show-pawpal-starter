@@ -57,7 +57,6 @@ class OrderStatus(Enum):
     PLACED = "placed"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
-    CANCELLED = "cancelled"
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +153,8 @@ class SmartCollar:
         self.battery_percent: int = battery_percent
         self.is_paired: bool = is_paired
 
-    def read_vitals(self) -> HealthReading:
-        """Generate a plausible health reading from the collar's seed."""
+    def read_vitals(self, at: datetime) -> HealthReading:
+        """Generate a plausible health reading timestamped `at`, repeatable from the seed."""
         raise NotImplementedError
 
 
@@ -163,7 +162,7 @@ class SmartCollar:
 # Core Scheduling
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class Task:
     """A single care task for a pet at a given date and time."""
 
@@ -186,7 +185,7 @@ class Task:
         raise NotImplementedError
 
 
-@dataclass
+@dataclass(eq=False)
 class Pet:
     """A pet with its care tasks, health profile, and optional collar."""
 
@@ -207,15 +206,23 @@ class Pet:
         """Remove the earliest-due incomplete matching task; return True if removed."""
         raise NotImplementedError
 
+    def update_task(self, description: str, time: str, changes: dict) -> bool:
+        """Replace the earliest-due incomplete match with an edited copy; return False if none."""
+        raise NotImplementedError
+
     def get_tasks(self) -> list[Task]:
         """Return this pet's tasks."""
+        raise NotImplementedError
+
+    def add_medication(self, med: Medication) -> None:
+        """Track a medication and add its reminder tasks to this pet."""
         raise NotImplementedError
 
     def pair_collar(self, collar: SmartCollar) -> None:
         """Pair a smart collar with this pet."""
         raise NotImplementedError
 
-    def sync_collar(self) -> Optional[HealthReading]:
+    def sync_collar(self, at: datetime) -> Optional[HealthReading]:
         """Read vitals from the paired collar, or return None if no collar is paired."""
         raise NotImplementedError
 
@@ -292,8 +299,10 @@ class Scheduler:
         """Return the tasks sorted with HIGH priority first."""
         raise NotImplementedError
 
-    def filter_tasks(self, pet_name: str, completed: bool) -> list[Task]:
-        """Return tasks for one pet with the given completion status."""
+    def filter_tasks(
+        self, pet_name: Optional[str] = None, completed: Optional[bool] = None
+    ) -> list[Task]:
+        """Return tasks matching the given pet and completion status; None skips that filter."""
         raise NotImplementedError
 
     def detect_conflicts(self, day: date) -> list[str]:
@@ -401,8 +410,10 @@ class Cart:
         """Empty the cart."""
         raise NotImplementedError
 
-    def checkout(self, owner: Owner, payment: MockPayment) -> Order:
-        """Charge the payment, create an Order, add it to the owner, and clear the cart."""
+    def checkout(
+        self, owner: Owner, payment: MockPayment, pet_name: str, today: date
+    ) -> Order:
+        """Charge, create an Order with a delivery task for the pet, and clear the cart."""
         raise NotImplementedError
 
 
