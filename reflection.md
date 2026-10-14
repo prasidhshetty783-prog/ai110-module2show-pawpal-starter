@@ -49,6 +49,7 @@
 **How I built the UML**
 
 I built the diagram in rounds, using Claude in two roles:
+
 1. I described my app and my two extra features to Claude in chat, which drafted a first
    class design.
 2. I checked it against the starter README and noticed it was missing two of the
@@ -65,6 +66,7 @@ Tracker, and Food Marketplace.
 **Classes and their responsibilities**
 
 *Core scheduling*
+
 - **Owner**: Holds the owner's info (name, email, address) and daily constraints
   (`available_minutes`, `day_start`, `day_end`, `preferred_types`). Owns the list of pets,
   the shopping cart, and past orders. `get_all_tasks()` is the single place the Scheduler
@@ -82,6 +84,7 @@ Tracker, and Food Marketplace.
   (walk, feeding, medication, grooming, enrichment, appointment, delivery).
 
 *Health Tracker*
+
 - **SmartCollar**: The simulated wearable. It has a device ID, a battery level, and a seed,
   so the same collar always produces the same readings for testing.
 - **HealthReading** (dataclass): One snapshot of vitals: heart rate, SpO2, temperature,
@@ -95,6 +98,7 @@ Tracker, and Food Marketplace.
   serious it is.
 
 *Food Marketplace*
+
 - **Marketplace**: Holds the product catalog. Searches it, scores each product for a
   specific pet (wrong species and allergens are excluded first), recommends the top matches,
   explains each recommendation, and compares products side by side.
@@ -242,17 +246,13 @@ scoring also makes every decision easy to explain.
 I used Claude in two roles:
 
 - **Claude in chat, as my planning partner.** It read the project brief and grading
-  rubric and helped me build a phase-by-phase plan where every step maps to rubric
-  points. It drafted the detailed UML from my feature ideas (Health Tracker and Food
-  Marketplace), rendered the diagram to check it was readable, and wrote `CLAUDE.md`, the
-  rules file that Claude in VS Code reads at the start of every session. It also reviewed
-  my design when I spotted missing requirements.
-- **Claude in VS Code, as my builder.** [FILL IN as you go: plan-mode UML review (Phase
-  1), skeleton generation, implementing the core classes (Phase 2), wiring Streamlit
-  (Phase 3), agent mode for recurring tasks (Phase 4) and the marketplace (Phase 5B),
-  writing and debugging tests (Phase 5).]
+  rubric and helped me build a phase-by-phase plan where every step maps to rubric points. It drafted the detailed UML from my feature ideas (Health Tracker and Food Marketplace), rendered the diagram to check it was readable, and wrote `CLAUDE.md`, the rules file that Claude in VS Code reads at the start of every session. It also reviewed my design when I spotted missing requirements.
+- **Claude in VS Code, as my builder.** It generated `diagrams/uml.mmd` from my full
+  brainstorm, adding 7 improvements I accepted. It wrote the class skeleton, built a script to compare the code against the UML, and reviewed the skeleton (22 findings).
+  In Phase 2 it implemented Task, Pet, Owner, and `Scheduler.get_todays_schedule()`, wrote `main.py` with an aligned schedule table, wrote the first two tests, and drafted the README summary. [ADD as you go: Phase 3 UI, Phase 4 algorithms, Phase 5 tests.]
 
 **What helped most:**
+
 - `CLAUDE.md` as context engineering. My design rules (for example, "the Scheduler only
   reads tasks through `owner.get_all_tasks()`") carried over into every session, even
   after `/clear`, so I didn't have to repeat them.
@@ -274,18 +274,30 @@ I used Claude in two roles:
   scenario asks for: time available and owner preferences. I didn't accept the draft as
   it was. I asked for those to be added, and the design got a real daily planner instead
   of just sorting.
-- **Moment 2:** [FILL IN with a real one from Phases 1–5B. Watch for these:
-  - Claude adds a class or method that isn't in the UML.
-  - The Scheduler reads `pet.tasks` directly instead of going through the Owner.
-  - Tests use `date.today()`.
-  - Claude's "simpler" `detect_conflicts` is shorter but harder to read.
-  - The marketplace recommends a product containing the pet's allergen.
-  Say what it suggested, what you did instead, and why.]
+- **Moment 2:** When Claude in VS Code generated the UML, it said description + time
+  uniquely identifies a task. Claude in chat pointed out that's false once a daily task
+  repeats: tomorrow's "Walk 08:00" has the same description and time as today's. I didn't
+  accept the claim as stated. I added two rules to CLAUDE.md: actions target the
+  earliest-due *incomplete* match, and exact duplicates (same description, time, and
+  date) are rejected.
+- **Moment 3:** Claude's README summary was accurate but was one dense paragraph, and it
+  implied the owner's time limits already shaped the schedule, which they won't until
+  Phase 4. I split it into one bullet per class and added a line saying the limits drive
+  the upcoming planner, so the README doesn't promise behavior `main.py` can't show yet.
 
-**How I verified AI output:** [FILL IN with what you actually did. Likely: reading every
-change before accepting it, running `python main.py` and checking each section by eye,
-running `python -m pytest` after each phase, asking Claude to compare the code against the
-UML, and asking "is the bug in my test or in my code?" when a test failed.]
+**How I verified AI output:**
+
+- **Ran the code:** I ran `python main.py` and checked the schedule by eye (right
+  pets, right order), and ran `python -m pytest` (2 passed).
+- **Cross-checked UML against code twice:** once with Claude in VS Code's script and
+  once independently with Claude in chat. Both found 20 classes and enums and 46
+  matching methods. Claude in VS Code's first run reported 41 "type mismatches" that
+  turned out to be a bug in its own checker, which is a reminder that the checking
+  tool needs checking too.
+- **Tested the rules directly:** I had Claude in chat run 20 checks on the
+  `CLAUDE.md` rules (bad times, duplicate pets and tasks, editing the earliest
+  incomplete task). All passed.
+- **Checked the diagram rendered,** in Mermaid Live and on GitHub.
 
 ---
 
@@ -294,6 +306,7 @@ UML, and asking "is the bug in my test or in my code?" when a test failed.]
 **a. What you tested**
 
 [FILL IN after Phase 5. Keep only the tests you actually wrote and that pass.]
+
 - **Core:** marking a task complete; adding a task increases the pet's task count;
   invalid times like "9:00" are rejected.
 - **Scheduling:** sorting by time; sorting by priority then time; filtering by pet;
@@ -325,6 +338,7 @@ but be wrong.]
 e.g., "Core scheduling is well covered, but the UI is only tested by hand."]
 
 **Edge cases I'd test next:**
+
 - Tasks with overlapping durations, not just the exact same time.
 - Two tasks on the same pet with the same description. `mark_task_complete` finds tasks
   by description, so it could complete the wrong one. Task IDs would fix this.
@@ -349,6 +363,7 @@ across sessions.]
 **b. What you would improve**
 
 [FILL IN in Phase 6. Candidates based on the current design:
+
 - overlap-based conflict detection using durations
 - unique task IDs instead of matching by description
 - connecting a real wearable instead of simulated readings

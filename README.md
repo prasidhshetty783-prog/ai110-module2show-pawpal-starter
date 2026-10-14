@@ -42,16 +42,43 @@ pip install -r requirements.txt
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## 🧩 How PawPal+ works
+
+PawPal+ is built around four classes in `pawpal_system.py`:
+
+- **Owner**: the person. Stores contact details, daily limits (minutes available for pet
+  care, waking hours, and preferred task types), and their pets. Pet names must be unique.
+- **Pet**: one animal (name, species, breed, age, weight) and its list of care tasks.
+  Tasks can be added, edited, or removed, and exact duplicates are refused.
+- **Task**: one care item, like a 30-minute walk at 07:30 on a given day. It has a type,
+  duration, priority, how often it repeats, and whether it's done.
+- **Scheduler**: the "brain." It keeps no tasks of its own. It asks the Owner for every
+  pet's tasks through `get_all_tasks()`, keeps the ones due on the chosen day, and sorts
+  them by time.
+
+**How data flows:** Owner → Pets → Tasks, and Scheduler → `owner.get_all_tasks()` →
+today's schedule. Because the Scheduler always goes through the Owner, it works across
+all pets at once, not just one.
+
+The owner's daily limits are stored now and will drive the daily planner, which picks
+what fits in the owner's time and explains what it skipped.
+
 ## 🖥️ Sample Output
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
-
 ```
-# e.g.:
-# Daily plan for Biscuit (Golden Retriever):
-#   08:00 — Morning walk (30 min) [priority: high]
-#   09:00 — Feeding (10 min) [priority: high]
-#   ...
+PawPal+ for Jordan (Mochi, Luna)
+
+Today's Schedule - Wednesday, October 14, 2026
+==================================================
+Time   Pet    Task              Duration  Priority
+-----  -----  ----------------  --------  --------
+07:00  Luna   Breakfast            5 min  HIGH
+07:30  Mochi  Morning walk        30 min  HIGH
+12:00  Mochi  Brush coat          10 min  MEDIUM
+18:00  Mochi  Evening walk        30 min  HIGH
+19:30  Luna   Feather toy play    15 min  LOW
+-----  -----  ----------------  --------  --------
+5 tasks, 90 min total
 ```
 
 ## 🧪 Testing PawPal+
@@ -67,7 +94,7 @@ pytest --cov
 Sample test output:
 
 ```
-# Paste your pytest output here
+
 ```
 
 ## 📐 Smarter Scheduling
