@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -44,6 +44,13 @@ class Frequency(Enum):
     ONCE = "once"
     DAILY = "daily"
     WEEKLY = "weekly"
+
+
+# How far ahead the next occurrence of a recurring task is due. ONCE has no entry.
+_RECURRENCE_STEP: dict[Frequency, timedelta] = {
+    Frequency.DAILY: timedelta(days=1),
+    Frequency.WEEKLY: timedelta(days=7),
+}
 
 
 class TaskType(Enum):
@@ -197,13 +204,15 @@ class Task:
 
     def mark_complete(self) -> Optional[Task]:
         """Mark this task done and return its next occurrence, if any."""
-        # Recurrence (next_occurrence) is wired in during Phase 4.
         self.completed = True
-        return None
+        return self.next_occurrence()
 
     def next_occurrence(self) -> Optional[Task]:
         """Return the next copy of a recurring task, or None for a one-time task."""
-        raise NotImplementedError
+        step = _RECURRENCE_STEP.get(self.frequency)
+        if step is None:
+            return None
+        return replace(self, due_date=self.due_date + step, completed=False)
 
 
 @dataclass(eq=False)
@@ -393,7 +402,28 @@ class Scheduler:
 
     def mark_task_complete(self, pet_name: str, description: str, time: str) -> Optional[Task]:
         """Complete the earliest-due incomplete match and return its next occurrence, if any."""
-        raise NotImplementedError
+        pet = self.owner.get_pet(pet_name)
+        if pet is None:
+            return None
+        task = pet._find_task(description, time)
+        if task is None:
+            return None
+        upcoming = task.mark_complete()
+        if upcoming is None:
+            return None
+        # Same check as Pet._is_duplicate: if the next occurrence is already there
+        # (completed or not), hand it back instead of adding a copy.
+        existing = next(
+            (t for t in pet.tasks
+             if t.description == upcoming.description
+             and t.time == upcoming.time
+             and t.due_date == upcoming.due_date),
+            None,
+        )
+        if existing is not None:
+            return existing
+        pet.add_task(upcoming)
+        return upcoming
 
     def build_daily_plan(self, day: date) -> list[Task]:
         """Choose the day's tasks that fit the owner's time and hours, sorted by time."""

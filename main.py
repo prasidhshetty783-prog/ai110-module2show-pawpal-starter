@@ -1,8 +1,8 @@
 """PawPal+ CLI demo: builds a sample owner with two pets and prints today's schedule."""
 
-from datetime import date
+from datetime import date, timedelta
 
-from pawpal_system import Owner, Pet, Priority, Scheduler, Task, TaskType
+from pawpal_system import Frequency, Owner, Pet, Priority, Scheduler, Task, TaskType
 
 HEADERS = ["Time", "Pet", "Task", "Duration", "Priority"]
 RIGHT_ALIGNED = {"Duration"}
@@ -23,7 +23,8 @@ def build_demo_owner(today: date) -> Owner:
     luna.add_task(Task("Breakfast", "07:00", today, TaskType.FEEDING,
                        priority=Priority.HIGH, duration_minutes=5))
     mochi.add_task(Task("Morning walk", "07:30", today, TaskType.WALK,
-                        priority=Priority.HIGH, duration_minutes=30))
+                        frequency=Frequency.DAILY, priority=Priority.HIGH,
+                        duration_minutes=30))
     luna.add_task(Task("Feather toy play", "19:30", today, TaskType.ENRICHMENT,
                        priority=Priority.LOW, duration_minutes=15))
     mochi.add_task(Task("Brush coat", "12:00", today, TaskType.GROOMING,
@@ -76,6 +77,17 @@ def main() -> None:
     print(f"PawPal+ for {owner.name} ({', '.join(p.name for p in owner.pets)})\n")
     print_schedule(f"Today's Schedule - {today:%A, %B %d, %Y}",
                    scheduler.get_todays_schedule(today))
+
+    # Recurrence: completing a DAILY task creates tomorrow's copy.
+    print("\nMarking Mochi's daily 'Morning walk' (07:30) complete...")
+    upcoming = scheduler.mark_task_complete("Mochi", "Morning walk", "07:30")
+    if upcoming is not None:
+        print(f"Next occurrence added: '{upcoming.description}' on "
+              f"{upcoming.due_date:%A, %B %d} at {upcoming.time}\n")
+
+    tomorrow = today + timedelta(days=1)
+    print_schedule(f"Tomorrow's Schedule - {tomorrow:%A, %B %d, %Y}",
+                   scheduler.get_todays_schedule(tomorrow))
 
 
 if __name__ == "__main__":
