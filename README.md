@@ -66,21 +66,32 @@ planned or skipped (see **📐 Smarter Scheduling**).
 
 ## 🖥️ Sample Output
 
-```
-PawPal+ for Jordan (Mochi, Luna)
+PawPal+ for Jordan (Mochi, Luna) - Friday, October 16, 2026
+Available: 90 min | Hours: 07:00-21:00 | Prefers: walk
 
-Today's Schedule - Wednesday, October 14, 2026
-==================================================
-Time   Pet    Task              Duration  Priority
------  -----  ----------------  --------  --------
-07:00  Luna   Breakfast            5 min  HIGH
-07:30  Mochi  Morning walk        30 min  HIGH
-12:00  Mochi  Brush coat          10 min  MEDIUM
-18:00  Mochi  Evening walk        30 min  HIGH
-19:30  Luna   Feather toy play    15 min  LOW
------  -----  ----------------  --------  --------
-5 tasks, 90 min total
-```
+5. Today's plan
+===============
+Time   Pet    Task              Type        Duration  Priority
+-----  -----  ----------------  ----------  --------  --------
+07:30  Mochi  Morning walk      walk          30 min  HIGH
+07:30  Luna   Breakfast         feeding        5 min  HIGH
+08:00  Luna   Thyroid pill      medication     5 min  HIGH
+12:00  Mochi  Brush coat        grooming      10 min  MEDIUM
+18:00  Mochi  Evening walk      walk          30 min  HIGH
+19:30  Luna   Feather toy play  enrichment    10 min  LOW
+-----  -----  ----------------  ----------  --------  --------
+6 tasks, 90 min total
+Minutes used: 90 of 90 available
+
+6. Skipped tasks
+================
+Time   Pet    Task           Type        Duration  Priority
+-----  -----  -------------  ----------  --------  --------
+13:00  Mochi  Puzzle feeder  enrichment    20 min  MEDIUM
+16:00  Mochi  Bath           grooming      40 min  MEDIUM
+20:45  Luna   Nail trim      grooming      20 min  LOW
+-----  -----  -------------  ----------  --------  --------
+3 tasks, 80 min total
 
 ## 🧪 Testing PawPal+
 
