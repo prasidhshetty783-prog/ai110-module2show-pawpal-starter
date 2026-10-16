@@ -405,7 +405,14 @@ class Scheduler:
         pet = self.owner.get_pet(pet_name)
         if pet is None:
             return None
-        task = pet._find_task(description, time)
+        # Tasks come only from owner.get_all_tasks(); pet.name is the canonical spelling
+        # that add_task() stamped on each task, so this match is exact.
+        pet_tasks = [t for t in self.owner.get_all_tasks() if t.pet_name == pet.name]
+        matches = [
+            t for t in pet_tasks
+            if t.description == description and t.time == time and not t.completed
+        ]
+        task = min(matches, key=lambda t: t.due_date, default=None)
         if task is None:
             return None
         upcoming = task.mark_complete()
@@ -414,7 +421,7 @@ class Scheduler:
         # Same check as Pet._is_duplicate: if the next occurrence is already there
         # (completed or not), hand it back instead of adding a copy.
         existing = next(
-            (t for t in pet.tasks
+            (t for t in pet_tasks
              if t.description == upcoming.description
              and t.time == upcoming.time
              and t.due_date == upcoming.due_date),
