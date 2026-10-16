@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from enum import Enum
+from itertools import combinations
 from typing import Optional
 
 _HHMM_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -397,8 +398,18 @@ class Scheduler:
         raise NotImplementedError
 
     def detect_conflicts(self, day: date) -> list[str]:
-        """Return a warning for each set of tasks sharing the same date and time."""
-        raise NotImplementedError
+        """Return a warning for each pair of tasks sharing the same date and time."""
+        # Exact date + time match only (documented tradeoff: overlaps are not checked).
+        by_time: dict[str, list[Task]] = {}
+        for task in self.get_todays_schedule(day):
+            by_time.setdefault(task.time, []).append(task)
+
+        return [
+            f"Conflict on {day} at {time}: {a.pet_name}'s '{a.description}' "
+            f"and {b.pet_name}'s '{b.description}'"
+            for time, tasks in by_time.items()
+            for a, b in combinations(tasks, 2)
+        ]
 
     def mark_task_complete(self, pet_name: str, description: str, time: str) -> Optional[Task]:
         """Complete the earliest-due incomplete match and return its next occurrence, if any."""
