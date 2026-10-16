@@ -22,6 +22,18 @@ def _validate_hhmm(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be 24-hour 'HH:MM' (e.g. '07:30'), got {value!r}")
 
 
+def _to_minutes(hhmm: str) -> int:
+    """Convert a validated "HH:MM" string to minutes after midnight."""
+    hours, minutes = hhmm.split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+def _from_minutes(total: int) -> str:
+    """Convert minutes after midnight to "HH:MM", wrapping past midnight."""
+    hours, minutes = divmod(total % (24 * 60), 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -64,6 +76,18 @@ class TaskType(Enum):
     ENRICHMENT = "enrichment"
     APPOINTMENT = "appointment"
     DELIVERY = "delivery"
+
+
+# How each task type reads in a plan explanation ("you prefer walks").
+_TYPE_LABELS: dict[TaskType, str] = {
+    TaskType.WALK: "walks",
+    TaskType.FEEDING: "feeding",
+    TaskType.MEDICATION: "medication",
+    TaskType.GROOMING: "grooming",
+    TaskType.ENRICHMENT: "enrichment",
+    TaskType.APPOINTMENT: "appointments",
+    TaskType.DELIVERY: "deliveries",
+}
 
 
 class Severity(Enum):
@@ -395,7 +419,11 @@ class Scheduler:
         self, pet_name: Optional[str] = None, completed: Optional[bool] = None
     ) -> list[Task]:
         """Return tasks matching the given pet and completion status; None skips that filter."""
-        raise NotImplementedError
+        return [
+            t for t in self.owner.get_all_tasks()
+            if (pet_name is None or t.pet_name.lower() == pet_name.lower())
+            and (completed is None or t.completed == completed)
+        ]
 
     def detect_conflicts(self, day: date) -> list[str]:
         """Return a warning for each pair of tasks sharing the same date and time."""
@@ -443,17 +471,91 @@ class Scheduler:
         pet.add_task(upcoming)
         return upcoming
 
+    def _hours_problem(self, task: Task) -> Optional[str]:
+        """Return why a task falls outside the owner's hours, or None if it fits."""
+        start = _to_minutes(task.time)
+        end = start + task.duration_minutes
+        day_start, day_end = _to_minutes(self.owner.day_start), _to_minutes(self.owner.day_end)
+        if start < day_start or start >= day_end:
+            return f"Outside your hours ({self.owner.day_start} to {self.owner.day_end})."
+        if end > day_end:
+            return f"Would run past your hours (ends {_from_minutes(end)})."
+        return None
+
+    @staticmethod
+    def _medication_reason(outside_hours: bool, over_budget: bool) -> str:
+        """Explain a kept medication, naming any owner constraint the rule overrode."""
+        if outside_hours and over_budget:
+            overrode = "it's outside your hours and goes over your available time"
+        elif outside_hours:
+            overrode = "it's outside your hours"
+        elif over_budget:
+            overrode = "it goes over your available time"
+        else:
+            return "Medication, always kept (health first)."
+        return f"Medication, kept even though {overrode} (health first)."
+
+    def _why_chosen(self, task: Task) -> str:
+        """Explain a planned non-medication task: its priority and any preferred type."""
+        reason = f"{task.priority.value.capitalize()} priority"
+        if task.task_type in self.owner.preferred_types:
+            reason += f", you prefer {_TYPE_LABELS[task.task_type]}"
+        return reason + "."
+
+    def _plan(self, day: date) -> tuple[list[Task], list[Task], dict[Task, str]]:
+        """Decide the day's plan once; return (chosen, skipped, reason for each task)."""
+        todays = [t for t in self.get_todays_schedule(day) if not t.completed]  # rule 1
+        chosen: list[Task] = []
+        skipped: list[Task] = []
+        candidates: list[Task] = []
+        reasons: dict[Task, str] = {}  # keyed by identity: Task uses eq=False
+        minutes_left = self.owner.available_minutes
+
+        for task in todays:
+            hours_problem = self._hours_problem(task)
+            if task.task_type is TaskType.MEDICATION:  # rule 2: health first, minutes still count
+                minutes_left -= task.duration_minutes
+                chosen.append(task)
+                reasons[task] = self._medication_reason(hours_problem is not None, minutes_left < 0)
+            elif hours_problem is not None:  # rule 3
+                skipped.append(task)
+                reasons[task] = hours_problem
+            else:
+                candidates.append(task)
+
+        for task in sorted(candidates, key=self._rank_key):  # rule 4
+            if task.duration_minutes <= minutes_left:  # rule 5: take it if it fits...
+                chosen.append(task)
+                minutes_left -= task.duration_minutes
+                reasons[task] = self._why_chosen(task)
+            else:  # ...otherwise skip it and keep trying smaller tasks
+                skipped.append(task)
+                reasons[task] = (
+                    f"Not enough time left (needs {task.duration_minutes} min, "
+                    f"{max(minutes_left, 0)} min left)."
+                )
+
+        return self.sort_by_time(chosen), self.sort_by_time(skipped), reasons  # rule 6
+
     def build_daily_plan(self, day: date) -> list[Task]:
         """Choose the day's tasks that fit the owner's time and hours, sorted by time."""
-        raise NotImplementedError
+        chosen, _, _ = self._plan(day)
+        return chosen
 
     def skipped_tasks(self, day: date) -> list[Task]:
         """Return the day's tasks that did not make the plan."""
-        raise NotImplementedError
+        _, skipped, _ = self._plan(day)
+        return skipped
 
     def explain_plan(self, day: date) -> list[str]:
         """Return one plain-English reason for each chosen or skipped task."""
-        raise NotImplementedError
+        chosen, skipped, reasons = self._plan(day)
+        planned = set(chosen)
+        return [
+            f"{t.time} {t.description} ({t.pet_name}, {t.duration_minutes} min): "
+            f"{'planned' if t in planned else 'skipped'}. {reasons[t]}"
+            for t in self.sort_by_time(chosen + skipped)
+        ]
 
 
 # ---------------------------------------------------------------------------
