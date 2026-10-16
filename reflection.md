@@ -236,6 +236,12 @@ scoring also makes every decision easy to explain.
   days until they complete the old one. That keeps recurrence simple and avoids flooding
   the schedule with copies, but it means a forgotten task can quietly drop off the plan.
   Generating upcoming occurrences ahead of time is a future improvement.
+- **Preference can push out a meal.** Preferred task types break ties within the same
+  priority. With 60 minutes and two preferred HIGH walks, a HIGH breakfast gets skipped.
+  That follows my rules, but a pet could miss a meal because the owner prefers walks. I
+  kept it because the explanation makes the tradeoff visible ("Not enough time left"),
+  and the owner can raise their minutes or change preferences. Treating feeding like
+  medication is a possible future rule.
 
 ---
 
@@ -284,6 +290,21 @@ I used Claude in two roles:
   implied the owner's time limits already shaped the schedule, which they won't until
   Phase 4. I split it into one bullet per class and added a line saying the limits drive
   the upcoming planner, so the README doesn't promise behavior `main.py` can't show yet.
+- **Moment 4: Algorithm brainstorm.** Claude suggested 7 improvements. I accepted 2: a
+  priority rank table, because sorting the text "high/low/medium" alphabetically puts LOW
+  before MEDIUM (a real bug), and an end-time check, because a 20:45 task lasting 20 min
+  ends after my 21:00 day end. I rejected 5 as out of scope or as changes to documented
+  tradeoffs (overlap detection, slot suggestions, shortest-first, catch-up recurrence,
+  combined dog walks).
+- **Moment 5: Model comparison caught a rule violation.** Comparing Claude and Gemini on
+  recurring tasks showed that Claude's `mark_task_complete` read `pet.tasks` directly,
+  breaking my "Scheduler only reads through Owner" rule, while Gemini's version followed
+  it. I had Claude rewrite it, and Claude in chat confirmed the Scheduler no longer
+  touches `pet.tasks` (details in `ai_interactions.md`).
+- **Moment 6: Explanations that hide the important case.** Claude's planner gave every
+  medication the same reason. I changed it so the explanation says when the medication
+  rule overrode the owner's hours or time budget, because those are exactly the moments
+  an owner needs to understand.
 
 **How I verified AI output:**
 
@@ -294,6 +315,10 @@ I used Claude in two roles:
   matching methods. Claude in VS Code's first run reported 41 "type mismatches" that
   turned out to be a bug in its own checker, which is a reminder that the checking
   tool needs checking too.
+- Claude in chat ran 13 edge-case checks on the planner (medication outside hours and
+  over budget, skip-then-fit, budget never exceeded, MEDIUM before LOW, preference
+  tie-break across pets, day-end boundaries, recurrence chain, no duplicate next
+  occurrence). All passed.
 - **Tested the rules directly:** I had Claude in chat run 20 checks on the
   `CLAUDE.md` rules (bad times, duplicate pets and tasks, editing the earliest
   incomplete task). All passed.
