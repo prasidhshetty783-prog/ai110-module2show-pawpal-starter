@@ -67,8 +67,14 @@ do only what I ask in the current prompt.
   1. Only that day's incomplete tasks.
   2. MEDICATION tasks are always kept, even outside the owner's hours or over the time
      budget (health first). Their minutes still count toward the total.
-  3. Any other task outside day_start–day_end is skipped ("outside your hours").
+  3. Any other task that starts before day_start OR ends after day_end (start time +
+     duration) is skipped ("outside your hours", or "would run past your hours (ends 21:20)").
   4. The rest are ranked by priority (HIGH first), then preferred type, then time.
+     Use a private rank table `_PRIORITY_RANK = {HIGH: 0, MEDIUM: 1, LOW: 2}`; never sort
+     on the priority text ("high" < "low" < "medium" alphabetically is wrong).
+     Preferred-type rank = position in `owner.preferred_types` (first = most preferred;
+     types not in the list come after all preferred ones). One shared private sort key
+     (`_rank_key`) is used by both `sort_by_priority()` and `_plan()`.
   5. Go down the ranked list: add a task if it fits the minutes left; if it doesn't fit,
      skip it and keep trying the next (smaller) tasks.
   6. Return the chosen tasks sorted by time.
