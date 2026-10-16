@@ -33,6 +33,11 @@ class Priority(Enum):
     HIGH = "high"
 
 
+# Sort rank for priorities (lower = more urgent). Never sort on the text values:
+# alphabetically "high" < "low" < "medium", which is wrong.
+_PRIORITY_RANK: dict[Priority, int] = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
+
+
 class Frequency(Enum):
     """How often a task or medication repeats."""
 
@@ -361,13 +366,20 @@ class Scheduler:
         todays = [t for t in self.owner.get_all_tasks() if t.due_date == day]
         return sorted(todays, key=lambda t: t.time)
 
+    def _rank_key(self, task: Task) -> tuple[int, int, str]:
+        """Rank by priority (HIGH first), then preferred-type position, then time."""
+        prefs = self.owner.preferred_types
+        pref_rank = prefs.index(task.task_type) if task.task_type in prefs else len(prefs)
+        return (_PRIORITY_RANK[task.priority], pref_rank, task.time)
+
     def sort_by_time(self, tasks: list[Task]) -> list[Task]:
         """Return the tasks sorted by their HH:MM time."""
-        raise NotImplementedError
+        # Zero-padded "HH:MM" (enforced by _validate_hhmm) sorts correctly as text.
+        return sorted(tasks, key=lambda t: t.time)
 
     def sort_by_priority(self, tasks: list[Task]) -> list[Task]:
         """Return the tasks sorted with HIGH priority first."""
-        raise NotImplementedError
+        return sorted(tasks, key=self._rank_key)
 
     def filter_tasks(
         self, pet_name: Optional[str] = None, completed: Optional[bool] = None
