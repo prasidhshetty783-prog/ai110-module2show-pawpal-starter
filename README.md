@@ -60,8 +60,9 @@ PawPal+ is built around four classes in `pawpal_system.py`:
 today's schedule. Because the Scheduler always goes through the Owner, it works across
 all pets at once, not just one.
 
-The owner's daily limits are stored now and will drive the daily planner, which picks
-what fits in the owner's time and explains what it skipped.
+The Scheduler uses the owner's daily limits to build a plan: it picks what fits in the
+owner's time and hours, ranks by priority and preferences, and explains every task it
+planned or skipped (see **📐 Smarter Scheduling**).
 
 ## 🖥️ Sample Output
 
@@ -99,23 +100,45 @@ Sample test output:
 
 ## 📐 Smarter Scheduling
 
-> Fill in once you've implemented scheduling logic.
-
 | Feature | Method(s) | Notes |
 |---------|-----------|-------|
-| Task sorting | | e.g., by priority, duration |
-| Filtering | | e.g., skip tasks if time runs out |
-| Conflict handling | | e.g., overlapping time slots |
-| Recurring tasks | | e.g., daily vs. weekly |
+| Task sorting | `Scheduler.sort_by_time()`, `Scheduler.sort_by_priority()` | By "HH:MM" time, or by priority (HIGH → LOW), then the owner's preferred task types, then time. Uses a rank table, not the priority text, so MEDIUM correctly comes before LOW. |
+| Filtering | `Scheduler.filter_tasks()`, `Scheduler.build_daily_plan()`, `Scheduler.skipped_tasks()` | Filter by pet and/or done status across all pets. The daily plan skips tasks outside the owner's hours or that don't fit the time left, and keeps trying smaller tasks after a skip. |
+| Conflict handling | `Scheduler.detect_conflicts()` | Warns (never crashes) when two tasks, for the same pet or different pets, share the same date and time. Exact time matches only; overlapping durations are a planned improvement. |
+| Recurring tasks | `Scheduler.mark_task_complete()`, `Task.mark_complete()`, `Task.next_occurrence()` | Completing a daily task creates tomorrow's copy; weekly adds 7 days. If the copy already exists it's reused, never duplicated. |
+| Plan explanations | `Scheduler.explain_plan()` | One plain-English line per task saying why it was planned or skipped, including when the medication rule overrode the owner's hours or time budget. |
 
-## 📸 Demo Walkthrough
+**Medication rule:** medication is always planned, even outside the owner's hours or over
+the time budget, and the explanation says so.
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
+**Priority scheduling example** (`python main.py`, section 2):
 
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
+```
+Time   Pet    Task              Type        Duration  Priority
+-----  -----  ----------------  ----------  --------  --------
+07:30  Mochi  Morning walk      walk          30 min  HIGH
+18:00  Mochi  Evening walk      walk          30 min  HIGH
+07:30  Luna   Breakfast         feeding        5 min  HIGH
+08:00  Luna   Thyroid pill      medication     5 min  HIGH
+12:00  Mochi  Brush coat        grooming      10 min  MEDIUM
+13:00  Mochi  Puzzle feeder     enrichment    20 min  MEDIUM
+16:00  Mochi  Bath              grooming      40 min  MEDIUM
+19:30  Luna   Feather toy play  enrichment    10 min  LOW
+20:45  Luna   Nail trim         grooming      20 min  LOW
+```
+
+**Daily plan explanations** (90 minutes available, walks preferred):
+
+```
+- 07:30 Morning walk (Mochi, 30 min): planned. High priority, you prefer walks.
+- 07:30 Breakfast (Luna, 5 min): planned. High priority.
+- 08:00 Thyroid pill (Luna, 5 min): planned. Medication, always kept (health first).
+- 12:00 Brush coat (Mochi, 10 min): planned. Medium priority.
+- 13:00 Puzzle feeder (Mochi, 20 min): skipped. Not enough time left (needs 20 min, 10 min left).
+- 16:00 Bath (Mochi, 40 min): skipped. Not enough time left (needs 40 min, 10 min left).
+- 18:00 Evening walk (Mochi, 30 min): planned. High priority, you prefer walks.
+- 19:30 Feather toy play (Luna, 10 min): planned. Low priority.
+- 20:45 Nail trim (Luna, 20 min): skipped. Would run past your hours (ends 21:05).
+```
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
