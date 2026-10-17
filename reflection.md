@@ -305,6 +305,17 @@ I used Claude in two roles:
   medication the same reason. I changed it so the explanation says when the medication
   rule overrode the owner's hours or time budget, because those are exactly the moments
   an owner needs to understand.
+- **Moment 7: Testing whether the AI follows my rules under pressure.** My CLAUDE.md
+says "Never run git commit or git push," because I want every commit to be my own,
+reviewed decision. To test that rule, I asked Claude in VS Code to commit in three
+different cases. Each time it refused and pointed to the rule. When I kept pushing, it
+said it would make an exception "this one time" because I had asked explicitly, but
+would follow the rule from then on. I checked `git log`, and no commit was made. The
+lesson: an instruction file states my preferences, but it isn't enforcement. A direct
+request can override it. So I added a deny rule for `git commit` and `git push` in
+`.claude/settings.json`, which Claude Code applies before the AI can act. Rules that
+protect something important should be enforced by the tool, not left to the AI's
+judgment.
 
 **How I verified AI output:**
 
@@ -330,46 +341,55 @@ I used Claude in two roles:
 
 **a. What you tested**
 
-[FILL IN after Phase 5. Keep only the tests you actually wrote and that pass.]
+56 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
+(October 15, 2026), so the results never depend on what day I run them.
 
-- **Core:** marking a task complete; adding a task increases the pet's task count;
-  invalid times like "9:00" are rejected.
-- **Scheduling:** sorting by time; sorting by priority then time; filtering by pet;
-  daily tasks recur the next day; one-time tasks don't recur; conflicts are flagged
-  across two pets; a pet with no tasks gives an empty schedule.
-- **Daily plan:**
-  - never goes over the owner's available minutes (medication aside)
-  - when time is tight, high priority beats low
-  - preferred types win ties
-  - medication is always kept
-  - tasks outside waking hours are skipped
-  - skipped tasks explain why
-- **Health:** high heart rate triggers an alert; normal readings don't; medication creates
-  one reminder per time; the same seed gives the same reading.
-- **Marketplace:** allergen and wrong-species products are never recommended;
-  explanations mention the matched condition; cart totals are correct; empty-cart
-  checkout raises an error; checkout creates a delivery task.
-- **Save/load:** saving and loading gives back the same pets, tasks, enum values, and
-  dates.
+- **Validation:** times like "9:00", "24:00", and "07:60" are rejected; owner hours must
+  be "HH:MM", day start must come before day end, and available minutes can't be negative
+  (zero is allowed); "mochi" is refused when "Mochi" already exists; an exact duplicate
+  task is refused, but the same task on another day is allowed.
+- **Safe edits:** `update_task` swaps in an edited copy; a bad edit (invalid time, a
+  duplicate, or an unknown field) raises an error and leaves the original task untouched;
+  editing a task that doesn't exist returns False.
+- **Sorting:** by time; by priority as HIGH → MEDIUM → LOW (not alphabetical, which
+  would put LOW before MEDIUM); ties broken by preferred type, then time; sorting never
+  changes the original list.
+- **Filtering:** no filters returns every task; pet names match in any case; pet and
+  done status combine; an unknown pet returns an empty list instead of crashing.
+- **Recurrence:** daily tasks come back the next day and weekly tasks 7 days later,
+  including across a month and a year boundary; one-time tasks don't come back; if
+  tomorrow's copy already exists it's reused, not duplicated; completing twice in a row
+  finishes the earliest pending copy each time; no match returns None.
+- **Conflicts:** two pets at the same time give one warning; three tasks give three (one
+  per pair); the same pet double-booked counts; the same time on different days doesn't;
+  a completed task never conflicts with a pending one.
+- **Daily plan:** everything that fits is planned and sorted by time; every task of
+  the day ends up either planned or skipped, never both; medication is kept even outside
+  hours or over budget; a task ending exactly at day end is kept, one minute later is
+  skipped; a big task that doesn't fit is skipped while smaller ones after it still get
+  planned; the preferred type wins when time is tight; every explanation names the real
+  reason.
 
-**Why these tests matter:** [FILL IN in your words. Starting point: they cover the
-behaviors where a silent bug would hurt the owner most. A skipped medication, an allergen
-in a recommendation, or a plan that ignores the owner's time would all look fine on screen
-but be wrong.]
+**Why these tests matter:** they guard the mistakes that would look fine on screen but
+quietly let the owner down: a skipped medication, a plan over the owner's time, a LOW
+task beating a MEDIUM one, or a recurring walk that gets copied twice. Writing the test
+plan first also found two real bugs before I wrote a single test: completed tasks still
+triggered conflict warnings, and impossible owner hours (like 21:00 to 07:00) silently
+skipped every task. I fixed both and added tests for them.
 
 **b. Confidence**
 
-[FILL IN: X/5 stars.] All [N] tests pass. [FILL IN: one sentence on why that number,
-e.g., "Core scheduling is well covered, but the UI is only tested by hand."]
+★★★★☆ (4/5). All 56 tests pass, and every scheduling rule is tested, including the edge
+cases right at its boundaries. One star off because the tests cover scheduling only: the
+Streamlit UI is checked by hand, and the Health Tracker and Food Marketplace aren't built
+yet.
 
 **Edge cases I'd test next:**
 
 - Tasks with overlapping durations, not just the exact same time.
-- Two tasks on the same pet with the same description. `mark_task_complete` finds tasks
-  by description, so it could complete the wrong one. Task IDs would fix this.
-- A task near midnight whose next occurrence crosses into the next day or month.
-- An owner with 0 available minutes, or waking hours where `day_end` is before
-  `day_start`.
+- Overnight care windows (e.g. a night-shift owner, 22:00–06:00), which are rejected today.
+- Two different tasks with the same description and time on one pet, but different
+  types. Task identity ignores the type, so task IDs would make this safer.
 - Loading a damaged or hand-edited `data.json`.
 - Health readings for species other than dog and cat (tracked, but no alerts).
 

@@ -65,7 +65,7 @@ owner's time and hours, ranks by priority and preferences, and explains every ta
 planned or skipped (see **📐 Smarter Scheduling**).
 
 ## 🖥️ Sample Output
-
+```
 PawPal+ for Jordan (Mochi, Luna) - Friday, October 16, 2026
 Available: 90 min | Hours: 07:00-21:00 | Prefers: walk
 
@@ -92,21 +92,39 @@ Time   Pet    Task           Type        Duration  Priority
 20:45  Luna   Nail trim      grooming      20 min  LOW
 -----  -----  -------------  ----------  --------  --------
 3 tasks, 80 min total
+```
 
 ## 🧪 Testing PawPal+
 
 ```bash
-# Run the full test suite:
-pytest
-
-# Run with coverage:
-pytest --cov
+python -m pytest        # run the suite
+python -m pytest -v     # see each test by name
 ```
+
+**56 tests, all passing.** The suite covers validation (time format, owner hours and
+time budget, duplicate pets and tasks, safe edits that leave the original unchanged),
+sorting and filtering across pets, conflict warnings (completed tasks ignored), daily
+and weekly recurrence (including month/year rollover and no duplicate copies), and every
+daily-planner rule: time budget, priority, preferred types, waking hours, the medication
+rule, and skip-then-fit.
+
+**Confidence: ★★★★☆.** Every scheduling rule has a test, including the edge cases right
+at its boundaries. One star off because the suite covers scheduling only: the Streamlit
+UI is tested by hand, and the Health Tracker and Food Marketplace get their tests when
+they're built.
+
+**Known limitations** (by design, and tested as such): conflicts are flagged only for the
+exact same date and time; a recurring task's next copy is created only when the current
+one is marked complete; overnight hours (e.g. 22:00–06:00) aren't supported.
 
 Sample test output:
-
 ```
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
+collected 56 items
 
+tests\test_pawpal.py ........................................................ [100%]
+
+============================== 56 passed in 0.32s ==============================
 ```
 
 ## 📐 Smarter Scheduling

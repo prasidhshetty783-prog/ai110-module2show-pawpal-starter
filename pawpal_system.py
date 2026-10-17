@@ -344,6 +344,13 @@ class Owner:
         """Create an owner with contact info and scheduling preferences."""
         _validate_hhmm(day_start, "day_start")
         _validate_hhmm(day_end, "day_end")
+        if _to_minutes(day_start) >= _to_minutes(day_end):
+            raise ValueError(
+                f"day_start must be before day_end (overnight windows are not supported), "
+                f"got {day_start} to {day_end}"
+            )
+        if available_minutes < 0:
+            raise ValueError(f"available_minutes cannot be negative, got {available_minutes}")
         self.name: str = name
         self.email: str = email
         self.address: str = address
@@ -426,11 +433,13 @@ class Scheduler:
         ]
 
     def detect_conflicts(self, day: date) -> list[str]:
-        """Return a warning for each pair of tasks sharing the same date and time."""
+        """Return a warning for each pair of incomplete tasks sharing the same date and time."""
         # Exact date + time match only (documented tradeoff: overlaps are not checked).
+        # Completed tasks are done, so they can't clash with anything still to do.
         by_time: dict[str, list[Task]] = {}
         for task in self.get_todays_schedule(day):
-            by_time.setdefault(task.time, []).append(task)
+            if not task.completed:
+                by_time.setdefault(task.time, []).append(task)
 
         return [
             f"Conflict on {day} at {time}: {a.pet_name}'s '{a.description}' "

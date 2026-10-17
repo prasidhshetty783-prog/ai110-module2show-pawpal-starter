@@ -52,7 +52,7 @@ do only what I ask in the current prompt.
   `sync_collar` (None when no collar is paired).
 - `Scheduler.filter_tasks(pet_name=None, completed=None)`: None means "don't filter on this".
 - `detect_conflicts()` returns warning strings and never raises. It checks exact
-  same date + time only (a documented tradeoff).
+  same date + time only (a documented tradeoff), and ignores completed tasks.
 
 ## Daily plan (the README scenario: track tasks, respect constraints, explain the plan)
 - Task types cover walks, feeding, meds, enrichment, grooming, appointments, deliveries
@@ -61,6 +61,7 @@ do only what I ask in the current prompt.
   - `available_minutes`: how much care time the owner has that day (default 120)
   - `day_start` / `day_end`: the owner's waking window, "HH:MM" (default "07:00"–"21:00")
   - `preferred_types`: task types the owner wants first when time is tight
+  - Owner raises ValueError if day_start is not before day_end, or available_minutes is negative. Overnight windows (e.g. 22:00–06:00) are not supported (document it).
 - The plan is computed ONCE by a private helper `Scheduler._plan(day)` that returns
   (chosen, skipped, reasons). `build_daily_plan`, `skipped_tasks`, and `explain_plan`
   all call it, so they can never disagree. Rules, in order:
