@@ -479,6 +479,26 @@ def test_greedy_plan_skips_big_task_and_keeps_trying_smaller_ones(home: Home) ->
     assert "needs 30 min, 10 min left" in home.scheduler.explain_plan(DAY)[1]
 
 
+def test_skip_reasons_maps_each_skipped_task_to_its_explain_plan_reason(home: Home) -> None:
+    """Keys are exactly skipped_tasks(); each reason ends the matching explain_plan() line."""
+    home.owner.available_minutes = 40
+    walk = make_task("Walk", "08:00", priority=Priority.HIGH, duration=30)  # planned
+    bath = make_task("Bath", "10:00", priority=Priority.LOW, duration=20)  # too long
+    late = make_task("Late walk", "20:50", duration=30)  # runs past 21:00
+    for task in (walk, bath, late):
+        home.mochi.add_task(task)
+
+    reasons = home.scheduler.skip_reasons(DAY)
+    explanations = home.scheduler.explain_plan(DAY)
+
+    assert list(reasons) == home.scheduler.skipped_tasks(DAY) == [bath, late]
+    assert walk not in reasons
+    assert reasons[bath] == "Not enough time left (needs 20 min, 10 min left)."
+    assert reasons[late] == "Would run past your hours (ends 21:20)."
+    assert explanations[1].endswith(reasons[bath])
+    assert explanations[2].endswith(reasons[late])
+
+
 def test_preferred_type_wins_when_time_is_tight(home: Home) -> None:
     """Two equal-priority 30-min tasks, 30 min left: the preferred walk is planned."""
     home.owner.available_minutes = 30

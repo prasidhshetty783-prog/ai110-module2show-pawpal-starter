@@ -66,6 +66,7 @@ classDiagram
             +mark_task_complete(pet_name: str, description: str, time: str) Optional~Task~
             +build_daily_plan(day: date) list~Task~
             +skipped_tasks(day: date) list~Task~
+            +skip_reasons(day: date) dict~Task, str~
             +explain_plan(day: date) list~str~
         }
 

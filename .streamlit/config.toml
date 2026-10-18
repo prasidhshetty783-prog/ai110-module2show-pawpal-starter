@@ -1,0 +1,34 @@
+# PawPal+ theme: quiet dark surfaces, one light accent, color only for meaning.
+[theme]
+base = "dark"
+backgroundColor = "#0B0C0E"
+secondaryBackgroundColor = "#15171A"
+textColor = "#F2F3F5"
+borderColor = "#24272B"
+# Primary buttons are light with dark text (text color set in app.py's style block).
+primaryColor = "#F2F3F5"
+linkColor = "#F2F3F5"
+linkUnderline = false
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "12px"
+buttonRadius = "12px"
+
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["36px", "20px", "16px", "15px", "14px", "13px"]
+headingFontWeights = [600, 600, 600, 500, 500, 500]
+
+# Meaning colors: green = healthy / planned, amber = attention, red = error.
+greenColor = "#34D399"
+yellowColor = "#F5B841"
+orangeColor = "#F5B841"
+redColor = "#F87171"
+grayColor = "#8B9096"
+blueColor = "#8B9096"
+
+[theme.sidebar]
+backgroundColor = "#0F1013"
+secondaryBackgroundColor = "#15171A"
+borderColor = "#24272B"

@@ -752,6 +752,11 @@ class Scheduler:
         _, skipped, _ = self._plan(day)
         return skipped
 
+    def skip_reasons(self, day: date) -> dict[Task, str]:
+        """Return each skipped task of the day mapped to why it did not make the plan."""
+        _, skipped, reasons = self._plan(day)
+        return {t: reasons[t] for t in skipped}
+
     def explain_plan(self, day: date) -> list[str]:
         """Return one plain-English reason for each chosen or skipped task."""
         chosen, skipped, reasons = self._plan(day)
