@@ -306,16 +306,24 @@ I used Claude in two roles:
   rule overrode the owner's hours or time budget, because those are exactly the moments
   an owner needs to understand.
 - **Moment 7: Testing whether the AI follows my rules under pressure.** My CLAUDE.md
-says "Never run git commit or git push," because I want every commit to be my own,
-reviewed decision. To test that rule, I asked Claude in VS Code to commit in three
-different cases. Each time it refused and pointed to the rule. When I kept pushing, it
-said it would make an exception "this one time" because I had asked explicitly, but
-would follow the rule from then on. I checked `git log`, and no commit was made. The
-lesson: an instruction file states my preferences, but it isn't enforcement. A direct
-request can override it. So I added a deny rule for `git commit` and `git push` in
-`.claude/settings.json`, which Claude Code applies before the AI can act. Rules that
-protect something important should be enforced by the tool, not left to the AI's
-judgment.
+ says "Never run git commit or git push," because I want every commit to be my own,
+ reviewed decision. To test that rule, I asked Claude in VS Code to commit in three
+ different cases. Each time it refused and pointed to the rule. When I kept pushing, it
+ said it would make an exception "this one time" because I had asked explicitly, but
+ would follow the rule from then on. It then made six commits in four seconds (you can
+ see them in the history on Thursday night, marked as co-authored by Claude). Two
+ lessons: an instruction file states my preferences, but it isn't enforcement, because a
+ direct request can override it; and "this one time" from the AI turned into six actions,
+ so I can't rely on its own description of what it will do. I added a deny rule for
+ `git commit` and `git push` in `.claude/settings.json`, which Claude Code applies before
+ the AI can act, and I confirmed it blocks a commit request. Rules that protect something
+ important should be enforced by the tool, not left to the AI's judgment.
+- **Moment 8: The AI found a bug in my own spec.** I wrote that the simulated collar
+ should produce "dog-range" values. While planning, Claude pointed out that a cat's
+ normal heart rate (140–220 bpm) barely overlaps a dog's (60–140), so every cat would get
+ a false heart-rate alarm. It gave me two options: document it as a limitation, or make
+ the collar species-aware. I chose to fix the design (one new `species` attribute in the
+ UML), because a health feature that cries wolf teaches owners to ignore real alerts.
 
 **How I verified AI output:**
 
@@ -341,7 +349,7 @@ judgment.
 
 **a. What you tested**
 
-56 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
+89 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
 (October 15, 2026), so the results never depend on what day I run them.
 
 - **Validation:** times like "9:00", "24:00", and "07:60" are rejected; owner hours must
@@ -369,6 +377,12 @@ judgment.
   skipped; a big task that doesn't fit is skipped while smaller ones after it still get
   planned; the preferred type wins when time is tight; every explanation names the real
   reason.
+- **Health Tracker:** the same seed gives the same reading, and two reads in a row differ;
+  the battery drops 1% per read and never goes below 0; pairing refuses an already-paired
+  collar, a second collar, or a species mismatch; a heart rate of 150 alerts for a dog but
+  not for a cat; SpO2 of 94% alerts; a rabbit gets no alerts; daily totals come from the
+  latest reading, not a sum; a medication with two dose times makes two HIGH reminder
+  tasks that the planner keeps; a duplicate dose means nothing gets added.
 
 **Why these tests matter:** they guard the mistakes that would look fine on screen but
 quietly let the owner down: a skipped medication, a plan over the owner's time, a LOW
@@ -379,10 +393,9 @@ skipped every task. I fixed both and added tests for them.
 
 **b. Confidence**
 
-★★★★☆ (4/5). All 56 tests pass, and every scheduling rule is tested, including the edge
-cases right at its boundaries. One star off because the tests cover scheduling only: the
-Streamlit UI is checked by hand, and the Health Tracker and Food Marketplace aren't built
-yet.
+★★★★☆ (4/5). All 89 tests pass, and every scheduling and Health Tracker rule is tested,
+including the edge cases right at its boundaries. One star off because the Streamlit UI
+is checked by hand and the Food Marketplace isn't built yet.
 
 **Edge cases I'd test next:**
 

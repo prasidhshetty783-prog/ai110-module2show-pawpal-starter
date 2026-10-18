@@ -84,23 +84,19 @@ do only what I ask in the current prompt.
   the owner's hours, or "not enough time left (needs X min, Y min left)".
 
 ## Health Tracker (simulated, no real device)
-- `SmartCollar` creates ONE `random.Random(seed)` in `__init__` and keeps it (as a
-  private attribute). Each `read_vitals(at)` call uses it, so a run of readings is
-  repeatable from the seed but each reading differs. `at` becomes the reading's timestamp.
-  Each read lowers `battery_percent` by 1 (never below 0).
-- `Pet.pair_collar(collar)` raises ValueError if the collar is already paired; otherwise
-  it sets `collar.is_paired = True` and stores it. `Pet.sync_collar(at)` reads and stores
-  a reading in `pet.health`, or returns None if no collar is paired.
-- `Pet.add_medication(med)` is how medications get added: it stores the med in
-  `pet.health` AND adds every `med.to_tasks(pet.name)` task with `add_task()`. That is
-  how medication reminders reach the schedule.
-- Keep a `VITAL_RANGES` dict in `pawpal_system.py`:
-  - dog: heart rate 60–140 bpm, temperature 38.3–39.2 °C, breathing 10–35/min, SpO2 ≥ 95%
-  - cat: heart rate 140–220 bpm, temperature 38.1–39.2 °C, breathing 20–30/min, SpO2 ≥ 95%
-  - any other species: track readings, no alerts
-- `check_alerts()` returns readable strings. Anywhere alerts are shown (CLI and UI),
-  also show: "Not veterinary advice. Contact your vet if you are worried."
-- `Medication.to_tasks()` makes one MEDICATION task per time in `times`, priority HIGH.
+- SmartCollar has a `species` (default "dog") and centres its values on that species'
+  normal range in VITAL_RANGES (dog-centred for other species). Small random variation;
+  sleep_score 0–100. Steps, distance_km and calories_burned are running totals for the
+  day (reset when the date changes; distance and calories are derived from steps).
+- `Pet.pair_collar` also raises if the pet already has a collar or the collar's species
+  doesn't match the pet's.
+- Medication: 5-minute HIGH tasks; raises ValueError if `times` is empty.
+  `Pet.add_medication` checks all its tasks for duplicates first and adds nothing if any fail.
+- check_alerts uses the LATEST reading only. No readings → [].
+- daily_summary(day) uses only that day's readings and returns: readings (count),
+  avg_heart_rate, avg_spo2, avg_temperature, avg_respiratory_rate (rounded, None if no
+  readings), total_steps, total_distance_km, total_calories (from the day's latest
+  reading, not a sum), latest_sleep_score (None if none), symptoms (count logged that day).
 
 ## Food Marketplace (simulated, no real store)
 - `SAMPLE_CATALOG` in `pawpal_system.py`: about 12 products with FICTIONAL brand names

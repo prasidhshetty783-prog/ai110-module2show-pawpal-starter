@@ -1,11 +1,12 @@
 """PawPal+ logic layer: owners, pets, tasks, scheduling, health tracking, and a food marketplace.
 
-Built from diagrams/uml.mmd. Core scheduling is implemented; health and marketplace
-methods are still stubs.
+Built from diagrams/uml.mmd. Core scheduling and the health tracker are implemented;
+marketplace methods are still stubs.
 """
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -110,6 +111,43 @@ class OrderStatus(Enum):
 # Health Tracker
 # ---------------------------------------------------------------------------
 
+# Normal resting vitals per species, keyed by HealthReading field name.
+# (low, high); None means no upper limit. Species not listed get no alerts.
+VITAL_RANGES: dict[str, dict[str, tuple[float, Optional[float]]]] = {
+    "dog": {
+        "heart_rate_bpm": (60, 140),
+        "temperature_c": (38.3, 39.2),
+        "respiratory_rate": (10, 35),
+        "spo2_percent": (95, None),
+    },
+    "cat": {
+        "heart_rate_bpm": (140, 220),
+        "temperature_c": (38.1, 39.2),
+        "respiratory_rate": (20, 30),
+        "spo2_percent": (95, None),
+    },
+}
+
+# How each vital reads in an alert: (label, unit suffix).
+_VITAL_LABELS: dict[str, tuple[str, str]] = {
+    "heart_rate_bpm": ("Heart rate", " bpm"),
+    "temperature_c": ("Temperature", " °C"),
+    "respiratory_rate": ("Breathing rate", "/min"),
+    "spo2_percent": ("SpO2", "%"),
+}
+
+# A collar for a species not in VITAL_RANGES produces values centred on this one.
+_FALLBACK_SPECIES = "dog"
+
+# Collar activity model: steps per minute since the last reading, and per-step conversions.
+_STEP_RATE: tuple[int, int] = (5, 12)
+_KM_PER_STEP = 0.0005
+_KCAL_PER_STEP = 0.04
+
+# Every medication reminder takes this long; it counts toward the owner's daily minutes.
+_MEDICATION_MINUTES = 5
+
+
 @dataclass
 class HealthReading:
     """One snapshot of vitals and activity from a smart collar."""
@@ -135,9 +173,29 @@ class Medication:
     frequency: Frequency = Frequency.DAILY
     start_date: date
 
+    def __post_init__(self) -> None:
+        """Keep a private copy of times and check there is at least one valid "HH:MM"."""
+        self.times = list(self.times)
+        if not self.times:
+            raise ValueError(f"Medication '{self.name}' needs at least one time")
+        for t in self.times:
+            _validate_hhmm(t, "Medication time")
+
     def to_tasks(self, pet_name: str) -> list[Task]:
         """Create one HIGH-priority MEDICATION task per time in `times`."""
-        raise NotImplementedError
+        return [
+            Task(
+                f"{self.name} ({self.dose})",
+                t,
+                self.start_date,
+                TaskType.MEDICATION,
+                frequency=self.frequency,
+                priority=Priority.HIGH,
+                duration_minutes=_MEDICATION_MINUTES,
+                pet_name=pet_name,
+            )
+            for t in self.times
+        ]
 
 
 @dataclass
@@ -159,29 +217,83 @@ class HealthProfile:
     symptoms: list[SymptomEntry] = field(default_factory=list)
     readings: list[HealthReading] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        """Keep private copies of every list passed in."""
+        self.conditions = list(self.conditions)
+        self.allergies = list(self.allergies)
+        self.medications = list(self.medications)
+        self.symptoms = list(self.symptoms)
+        self.readings = list(self.readings)
+
     def add_reading(self, reading: HealthReading) -> None:
         """Store a new health reading."""
-        raise NotImplementedError
+        self.readings.append(reading)
 
     def add_medication(self, med: Medication) -> None:
-        """Start tracking a medication."""
-        raise NotImplementedError
+        """Start tracking a medication (use Pet.add_medication to also schedule reminders)."""
+        self.medications.append(med)
 
     def log_symptom(self, entry: SymptomEntry) -> None:
         """Record a symptom entry."""
-        raise NotImplementedError
+        self.symptoms.append(entry)
 
     def latest_reading(self) -> Optional[HealthReading]:
         """Return the most recent reading, or None if there are none."""
-        raise NotImplementedError
+        # reversed() so that on a timestamp tie the last one added wins.
+        return max(reversed(self.readings), key=lambda r: r.timestamp, default=None)
 
     def daily_summary(self, day: date) -> dict:
         """Summarize the readings taken on the given day."""
-        raise NotImplementedError
+        todays = sorted(
+            (r for r in self.readings if r.timestamp.date() == day),
+            key=lambda r: r.timestamp,
+        )
+        latest = todays[-1] if todays else None
+
+        def average(field_name: str) -> Optional[float]:
+            """Mean of one field across today's readings, rounded, or None."""
+            if not todays:
+                return None
+            return round(sum(getattr(r, field_name) for r in todays) / len(todays), 1)
+
+        # Steps, distance, and calories are running totals for the day, so the
+        # day's total is the latest reading's value. Summing them would double count.
+        return {
+            "readings": len(todays),
+            "avg_heart_rate": average("heart_rate_bpm"),
+            "avg_spo2": average("spo2_percent"),
+            "avg_temperature": average("temperature_c"),
+            "avg_respiratory_rate": average("respiratory_rate"),
+            "total_steps": latest.steps if latest else 0,
+            "total_distance_km": latest.distance_km if latest else 0.0,
+            "total_calories": latest.calories_burned if latest else 0,
+            "latest_sleep_score": latest.sleep_score if latest else None,
+            "symptoms": sum(1 for s in self.symptoms if s.logged_on == day),
+        }
 
     def check_alerts(self, species: str) -> list[str]:
         """Return readable alerts for vitals outside the species' normal range."""
-        raise NotImplementedError
+        species = species.lower()
+        ranges = VITAL_RANGES.get(species)
+        reading = self.latest_reading()
+        if ranges is None or reading is None:
+            return []
+
+        alerts = []
+        for field_name, (low, high) in ranges.items():
+            value = getattr(reading, field_name)
+            label, unit = _VITAL_LABELS[field_name]
+            normal = f"{low:g}{unit} or higher" if high is None else f"{low:g} to {high:g}{unit}"
+            if value < low:
+                direction = "below"
+            elif high is not None and value > high:
+                direction = "above"
+            else:
+                continue
+            alerts.append(
+                f"{label} {value:g}{unit} is {direction} the normal {species} range ({normal})."
+            )
+        return alerts
 
 
 class SmartCollar:
@@ -191,18 +303,67 @@ class SmartCollar:
         self,
         device_id: str,
         seed: int,
+        species: str = "dog",
         battery_percent: int = 100,
         is_paired: bool = False,
     ) -> None:
-        """Create a collar with a device id and a random seed."""
+        """Create a collar for one species with a device id and a random seed."""
         self.device_id: str = device_id
         self.seed: int = seed
+        self.species: str = species.lower()
         self.battery_percent: int = battery_percent
         self.is_paired: bool = is_paired
+        # One generator for the collar's lifetime: a run of readings is repeatable
+        # from the seed, but each reading differs. Restarts from the seed after a load.
+        self._rng: random.Random = random.Random(seed)
+        # Running activity totals for the current day (reset when the date changes).
+        self._steps_day: Optional[date] = None
+        self._steps: int = 0
+        self._last_at: Optional[datetime] = None
+
+    def _centred(self, field_name: str) -> float:
+        """Draw a value centred in this collar's species range for one vital."""
+        ranges = VITAL_RANGES.get(self.species, VITAL_RANGES[_FALLBACK_SPECIES])
+        low, high = ranges[field_name]
+        assert high is not None, "only closed ranges are centred (SpO2 is drawn separately)"
+        # Mean at the middle, 4 standard deviations to each edge: almost always normal.
+        return self._rng.gauss((low + high) / 2, (high - low) / 8)
+
+    def _advance_steps(self, at: datetime, rate: float) -> int:
+        """Add steps for the minutes since the last reading today; return the day's total."""
+        if at.date() != self._steps_day or self._last_at is None:
+            self._steps_day = at.date()
+            self._steps = 0
+            self._last_at = datetime.combine(at.date(), datetime.min.time(), tzinfo=at.tzinfo)
+        # A reading earlier than the last one adds nothing (totals never go down).
+        minutes = max(0.0, (at - self._last_at).total_seconds() / 60)
+        self._steps += round(minutes * rate)
+        self._last_at = max(self._last_at, at)
+        return self._steps
 
     def read_vitals(self, at: datetime) -> HealthReading:
         """Generate a plausible health reading timestamped `at`, repeatable from the seed."""
-        raise NotImplementedError
+        # Always draw in the same order so the sequence stays repeatable from the seed.
+        heart_rate = round(self._centred("heart_rate_bpm"))
+        temperature = round(self._centred("temperature_c"), 1)
+        respiratory = round(self._centred("respiratory_rate"))
+        spo2 = round(self._rng.uniform(95.5, 99.5), 1)
+        sleep = min(100, max(0, self._rng.randint(60, 95)))
+        rate = self._rng.uniform(*_STEP_RATE)
+
+        steps = self._advance_steps(at, rate)
+        self.battery_percent = max(0, self.battery_percent - 1)
+        return HealthReading(
+            timestamp=at,
+            heart_rate_bpm=max(1, heart_rate),
+            spo2_percent=spo2,
+            temperature_c=temperature,
+            respiratory_rate=max(1, respiratory),
+            sleep_score=sleep,
+            steps=steps,
+            distance_km=round(steps * _KM_PER_STEP, 2),
+            calories_burned=round(steps * _KCAL_PER_STEP),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -317,15 +478,44 @@ class Pet:
 
     def add_medication(self, med: Medication) -> None:
         """Track a medication and add its reminder tasks to this pet."""
-        raise NotImplementedError
+        tasks = med.to_tasks(self.name)
+        # Check every dose before changing anything, so a duplicate second dose
+        # can't leave the first dose scheduled without its medication.
+        for i, task in enumerate(tasks):
+            clashes_with_new = any(
+                other.time == task.time and other.due_date == task.due_date
+                for other in tasks[:i]
+            )
+            if clashes_with_new or self._is_duplicate(task):
+                raise ValueError(
+                    f"{self.name} already has '{task.description}' at {task.time} "
+                    f"on {task.due_date}"
+                )
+        self.health.add_medication(med)
+        for task in tasks:
+            self.add_task(task)
 
     def pair_collar(self, collar: SmartCollar) -> None:
         """Pair a smart collar with this pet."""
-        raise NotImplementedError
+        if self.collar is not None:
+            raise ValueError(f"{self.name} already has a collar ({self.collar.device_id})")
+        if collar.is_paired:
+            raise ValueError(f"Collar {collar.device_id} is already paired")
+        if collar.species != self.species:
+            raise ValueError(
+                f"Collar {collar.device_id} is for a {collar.species}, "
+                f"but {self.name} is a {self.species}"
+            )
+        collar.is_paired = True
+        self.collar = collar
 
     def sync_collar(self, at: datetime) -> Optional[HealthReading]:
         """Read vitals from the paired collar, or return None if no collar is paired."""
-        raise NotImplementedError
+        if self.collar is None:
+            return None
+        reading = self.collar.read_vitals(at)
+        self.health.add_reading(reading)
+        return reading
 
 
 class Owner:

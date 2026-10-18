@@ -101,17 +101,17 @@ python -m pytest        # run the suite
 python -m pytest -v     # see each test by name
 ```
 
-**56 tests, all passing.** The suite covers validation (time format, owner hours and
+**89 tests, all passing.** The suite covers validation (time format, owner hours and
 time budget, duplicate pets and tasks, safe edits that leave the original unchanged),
 sorting and filtering across pets, conflict warnings (completed tasks ignored), daily
 and weekly recurrence (including month/year rollover and no duplicate copies), and every
 daily-planner rule: time budget, priority, preferred types, waking hours, the medication
-rule, and skip-then-fit.
+rule, and skip-then-fit. It also covers the Health Tracker: seeded collar readings,
+pairing rules, species-aware alerts, daily summaries, and medication reminders.
 
-**Confidence: ★★★★☆.** Every scheduling rule has a test, including the edge cases right
-at its boundaries. One star off because the suite covers scheduling only: the Streamlit
-UI is tested by hand, and the Health Tracker and Food Marketplace get their tests when
-they're built.
+**Confidence: ★★★★☆.** Every scheduling and Health Tracker rule has a test, including
+the edge cases right at its boundaries. One star off because the Streamlit UI is tested
+by hand, and the Food Marketplace gets its tests when it's built.
 
 **Known limitations** (by design, and tested as such): conflicts are flagged only for the
 exact same date and time; a recurring task's next copy is created only when the current
@@ -120,11 +120,11 @@ one is marked complete; overnight hours (e.g. 22:00–06:00) aren't supported.
 Sample test output:
 ```
 platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
-collected 56 items
+collected 89 items
 
 tests\test_pawpal.py ........................................................ [100%]
 
-============================== 56 passed in 0.32s ==============================
+============================== 89 passed in 0.32s ==============================
 ```
 
 ## 📐 Smarter Scheduling
@@ -169,5 +169,23 @@ Time   Pet    Task              Type        Duration  Priority
 - 19:30 Feather toy play (Luna, 10 min): planned. Low priority.
 - 20:45 Nail trim (Luna, 20 min): skipped. Would run past your hours (ends 21:05).
 ```
+
+## 🩺 Health Tracker (simulated)
+
+There's no real device. A `SmartCollar` simulates a wearable collar, so the feature can be
+built and tested without hardware.
+
+| Feature | Method(s) | Notes |
+|---------|-----------|-------|
+| Pair a collar | `Pet.pair_collar()` | One collar per pet. Refuses a collar that's already paired, a pet that already has one, or a species mismatch. |
+| Read vitals | `SmartCollar.read_vitals(at)`, `Pet.sync_collar(at)` | Heart rate, SpO2, temperature, breathing, sleep score, steps, distance, calories. Values centre on that species' normal range. Seeded, so a run is repeatable. Battery drops 1% per read. |
+| Daily summary | `HealthProfile.daily_summary(day)` | Averages for vitals; steps, distance and calories are running totals, so the day's total is the latest reading, never a sum. |
+| Alerts | `HealthProfile.check_alerts(species)` | Checks the latest reading against dog and cat normal ranges. Other species are tracked with no alerts. Always shown with: *"Not veterinary advice. Contact your vet if you are worried."* |
+| Medications | `Pet.add_medication()`, `Medication.to_tasks()` | Each dose time becomes a 5-minute HIGH medication task in the schedule, which the planner always keeps. If any dose is a duplicate, nothing is added. |
+| Symptoms | `HealthProfile.log_symptom()` | Date, description, and severity (mild / moderate / severe). |
+
+**Design decision:** the collar knows its species. At first it produced dog-range values
+for every pet, so every cat would have triggered a heart-rate alarm. (A cat's normal range
+is 140–220 bpm, and the dog range tops out at 140.)
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->

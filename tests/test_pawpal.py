@@ -1,11 +1,27 @@
 """Tests for the PawPal+ logic layer."""
 
-from datetime import date, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
 import pytest
 
-from pawpal_system import Frequency, Owner, Pet, Priority, Scheduler, Task, TaskType
+from pawpal_system import (
+    VITAL_RANGES,
+    Frequency,
+    HealthProfile,
+    HealthReading,
+    Medication,
+    Owner,
+    Pet,
+    Priority,
+    Scheduler,
+    Severity,
+    SmartCollar,
+    SymptomEntry,
+    Task,
+    TaskType,
+)
 
 DAY = date(2026, 10, 15)
 
@@ -548,3 +564,372 @@ def test_update_task_with_no_match_returns_false(home: Home) -> None:
     home.mochi.add_task(make_task("Walk", "08:00"))
 
     assert home.mochi.update_task("Walk", "10:00", {"duration_minutes": 5}) is False
+
+
+# ---------------------------------------------------------------------------
+# 7. Health Tracker
+# ---------------------------------------------------------------------------
+
+def at(hhmm: str, day: date = DAY) -> datetime:
+    """A fixed datetime on DAY (or another day) at "HH:MM"."""
+    hours, minutes = map(int, hhmm.split(":"))
+    return datetime(day.year, day.month, day.day, hours, minutes)
+
+
+def normal_dog_reading(when: datetime) -> HealthReading:
+    """A reading with every vital inside the dog range."""
+    return HealthReading(
+        timestamp=when, heart_rate_bpm=100, spo2_percent=98.0, temperature_c=38.7,
+        respiratory_rate=20, sleep_score=80, steps=1000, distance_km=0.5, calories_burned=40,
+    )
+
+
+def make_med(times: list[str], **overrides) -> Medication:
+    """A daily medication starting on DAY."""
+    fields = {"name": "Apoquel", "dose": "16 mg", "times": times, "start_date": DAY}
+    return Medication(**(fields | overrides))
+
+
+def in_range(value: float, low: float, high: float | None) -> bool:
+    """True if value is inside [low, high] (no upper limit when high is None)."""
+    return value >= low and (high is None or value <= high)
+
+
+# --- SmartCollar ---
+
+def test_same_seed_gives_same_readings_but_each_reading_differs() -> None:
+    """Two collars with one seed match reading for reading; consecutive readings differ."""
+    a, b = SmartCollar("A", seed=7), SmartCollar("B", seed=7)
+    times = [at("08:00"), at("12:00"), at("18:00")]
+
+    run_a = [a.read_vitals(t) for t in times]
+    run_b = [b.read_vitals(t) for t in times]
+
+    assert run_a == run_b
+    assert run_a[0] != replace(run_a[1], timestamp=run_a[0].timestamp)
+    assert [r.timestamp for r in run_a] == times
+
+
+def test_each_read_drains_battery_by_one_and_never_below_zero() -> None:
+    """Battery drops 1 per reading and stops at 0."""
+    collar = SmartCollar("A", seed=1, battery_percent=2)
+
+    collar.read_vitals(at("08:00"))
+    assert collar.battery_percent == 1
+    collar.read_vitals(at("09:00"))
+    collar.read_vitals(at("10:00"))
+
+    assert collar.battery_percent == 0
+
+
+@pytest.mark.parametrize("species", ["dog", "cat"])
+def test_collar_values_are_centred_on_its_species_range(species: str) -> None:
+    """Decision 1: a collar's vitals sit inside the normal range of its own species."""
+    collar = SmartCollar("A", seed=3, species=species)
+    ranges = VITAL_RANGES[species]
+
+    for hour in range(6, 22):
+        reading = collar.read_vitals(at(f"{hour:02d}:00"))
+        for field_name, (low, high) in ranges.items():
+            assert in_range(getattr(reading, field_name), low, high), field_name
+
+
+def test_seeded_cat_collar_gives_no_cat_alerts() -> None:
+    """A cat collar's normal readings never trigger check_alerts("cat")."""
+    luna = Pet("Luna", "cat", "Tabby", age_years=5, weight_kg=4.2)
+    luna.pair_collar(SmartCollar("CAT-1", seed=42, species="Cat"))
+
+    for hour in range(6, 22):
+        luna.sync_collar(at(f"{hour:02d}:00"))
+        assert luna.health.check_alerts("cat") == []
+
+
+def test_unknown_species_collar_uses_dog_centred_values() -> None:
+    """Decision 1: a rabbit collar reads like a dog collar, and rabbits get no alerts."""
+    rabbit_collar = SmartCollar("R", seed=5, species="rabbit")
+    dog_collar = SmartCollar("D", seed=5, species="dog")
+
+    assert rabbit_collar.read_vitals(at("08:00")) == dog_collar.read_vitals(at("08:00"))
+
+    profile = HealthProfile()
+    profile.add_reading(replace(normal_dog_reading(at("08:00")), heart_rate_bpm=300))
+    assert profile.check_alerts("rabbit") == []
+
+
+def test_steps_are_running_totals_that_reset_each_day() -> None:
+    """Decision 2: steps, distance, and calories only grow during a day, then restart."""
+    collar = SmartCollar("A", seed=9)
+
+    day_one = [collar.read_vitals(at(t)) for t in ["08:00", "12:00", "18:00"]]
+    next_morning = collar.read_vitals(at("08:00", DAY + timedelta(days=1)))
+
+    steps = [r.steps for r in day_one]
+    assert steps == sorted(steps) and steps[0] < steps[-1]
+    assert day_one[-1].distance_km > day_one[0].distance_km
+    assert day_one[-1].calories_burned > day_one[0].calories_burned
+    assert next_morning.steps < day_one[-1].steps
+
+
+def test_reading_earlier_than_the_last_does_not_lower_steps() -> None:
+    """An out-of-order (earlier) reading adds no steps; totals never go down."""
+    collar = SmartCollar("A", seed=9)
+    evening = collar.read_vitals(at("18:00"))
+
+    morning = collar.read_vitals(at("08:00"))
+
+    assert morning.steps == evening.steps
+
+
+# --- Pet: pairing and syncing ---
+
+def test_pair_collar_marks_it_paired_and_stores_it(home: Home) -> None:
+    """Pairing sets is_paired and attaches the collar to the pet."""
+    collar = SmartCollar("DOG-1", seed=1)
+
+    home.mochi.pair_collar(collar)
+
+    assert collar.is_paired is True
+    assert home.mochi.collar is collar
+
+
+def test_pair_collar_rejects_an_already_paired_collar(home: Home) -> None:
+    """A collar paired to one pet can't be paired to another."""
+    collar = SmartCollar("DOG-1", seed=1)
+    home.mochi.pair_collar(collar)
+    rex = Pet("Rex", "dog", "Boxer", age_years=4, weight_kg=30.0)
+
+    with pytest.raises(ValueError):
+        rex.pair_collar(collar)
+
+    assert rex.collar is None
+
+
+def test_pair_collar_rejects_second_collar_on_same_pet(home: Home) -> None:
+    """Decision 3: a pet that already wears a collar can't take another one."""
+    first = SmartCollar("DOG-1", seed=1)
+    second = SmartCollar("DOG-2", seed=2)
+    home.mochi.pair_collar(first)
+
+    with pytest.raises(ValueError):
+        home.mochi.pair_collar(second)
+
+    assert home.mochi.collar is first
+    assert second.is_paired is False
+
+
+def test_pair_collar_rejects_collar_for_another_species(home: Home) -> None:
+    """Decision 1: a dog collar can't be paired with a cat."""
+    collar = SmartCollar("DOG-1", seed=1, species="dog")
+
+    with pytest.raises(ValueError):
+        home.luna.pair_collar(collar)
+
+    assert collar.is_paired is False
+    assert home.luna.collar is None
+
+
+def test_sync_collar_without_collar_returns_none(home: Home) -> None:
+    """No paired collar means nothing to read."""
+    assert home.mochi.sync_collar(at("08:00")) is None
+    assert home.mochi.health.readings == []
+
+
+def test_sync_collar_stores_and_returns_the_reading(home: Home) -> None:
+    """A sync reads the collar and saves the reading on the pet's health profile."""
+    home.mochi.pair_collar(SmartCollar("DOG-1", seed=1))
+
+    reading = home.mochi.sync_collar(at("08:00"))
+
+    assert reading is not None
+    assert home.mochi.health.readings == [reading]
+    assert reading.timestamp == at("08:00")
+
+
+# --- Medication ---
+
+def test_to_tasks_makes_one_high_priority_medication_task_per_time() -> None:
+    """Each dose time becomes a HIGH MEDICATION task on the start date with the med's frequency."""
+    med = make_med(["08:00", "20:00"], frequency=Frequency.DAILY)
+
+    tasks = med.to_tasks("Mochi")
+
+    assert [t.time for t in tasks] == ["08:00", "20:00"]
+    for task in tasks:
+        assert task.task_type is TaskType.MEDICATION
+        assert task.priority is Priority.HIGH
+        assert task.due_date == DAY
+        assert task.frequency is Frequency.DAILY
+        assert task.pet_name == "Mochi"
+        assert "Apoquel" in task.description
+
+
+def test_medication_tasks_take_five_minutes_each() -> None:
+    """Decision 4: every dose is a 5 minute task."""
+    tasks = make_med(["08:00", "14:00", "20:00"]).to_tasks("Mochi")
+
+    assert [t.duration_minutes for t in tasks] == [5, 5, 5]
+
+
+def test_medication_rejects_empty_times() -> None:
+    """Decision 5: a medication with no dose times is an error."""
+    with pytest.raises(ValueError):
+        make_med([])
+
+
+@pytest.mark.parametrize("bad_time", ["8:00", "24:00", "noon"])
+def test_medication_rejects_bad_time(bad_time: str) -> None:
+    """Every dose time must be HH:MM."""
+    with pytest.raises(ValueError):
+        make_med(["08:00", bad_time])
+
+
+def test_medication_keeps_its_own_copy_of_times() -> None:
+    """Changing the caller's list later doesn't change the medication."""
+    times = ["08:00"]
+    med = make_med(times)
+
+    times.append("20:00")
+
+    assert med.times == ["08:00"]
+
+
+def test_pet_add_medication_stores_med_and_schedules_reminders(home: Home) -> None:
+    """add_medication records the med and its reminders reach the daily plan."""
+    med = make_med(["08:00", "20:00"])
+
+    home.mochi.add_medication(med)
+
+    assert home.mochi.health.medications == [med]
+    assert [t.time for t in home.mochi.get_tasks()] == ["08:00", "20:00"]
+    planned = home.scheduler.build_daily_plan(DAY)
+    assert [t.task_type for t in planned] == [TaskType.MEDICATION, TaskType.MEDICATION]
+
+
+def test_add_medication_with_duplicate_second_dose_adds_nothing(home: Home) -> None:
+    """If any dose duplicates an existing task, neither the med nor any dose is added."""
+    home.mochi.add_medication(make_med(["20:00"]))
+    before = home.mochi.get_tasks()
+
+    with pytest.raises(ValueError):
+        home.mochi.add_medication(make_med(["08:00", "20:00"]))
+
+    assert len(home.mochi.health.medications) == 1
+    assert home.mochi.get_tasks() == before
+
+
+def test_add_medication_with_repeated_time_adds_nothing(home: Home) -> None:
+    """The same time listed twice in one medication is caught before anything is added."""
+    with pytest.raises(ValueError):
+        home.mochi.add_medication(make_med(["08:00", "08:00"]))
+
+    assert home.mochi.health.medications == []
+    assert home.mochi.get_tasks() == []
+
+
+# --- HealthProfile ---
+
+def test_profile_add_methods_store_entries() -> None:
+    """add_reading, add_medication, and log_symptom each store what they're given."""
+    profile = HealthProfile()
+    reading = normal_dog_reading(at("08:00"))
+    med = make_med(["08:00"])
+    symptom = SymptomEntry(DAY, "Itchy ears", Severity.MILD)
+
+    profile.add_reading(reading)
+    profile.add_medication(med)
+    profile.log_symptom(symptom)
+
+    assert profile.readings == [reading]
+    assert profile.medications == [med]
+    assert profile.symptoms == [symptom]
+
+
+def test_profile_keeps_its_own_copy_of_lists() -> None:
+    """Lists passed to the constructor are copied."""
+    allergies = ["chicken"]
+    profile = HealthProfile(allergies=allergies)
+
+    allergies.append("beef")
+
+    assert profile.allergies == ["chicken"]
+
+
+def test_latest_reading_is_none_with_no_readings() -> None:
+    """An empty profile has no latest reading."""
+    assert HealthProfile().latest_reading() is None
+
+
+def test_latest_reading_goes_by_timestamp_not_insertion_order() -> None:
+    """A reading added later but timestamped earlier is not the latest."""
+    profile = HealthProfile()
+    evening = normal_dog_reading(at("18:00"))
+    profile.add_reading(evening)
+    profile.add_reading(normal_dog_reading(at("08:00")))
+
+    assert profile.latest_reading() is evening
+
+
+def test_check_alerts_with_no_readings_is_empty() -> None:
+    """No readings means no alerts."""
+    assert HealthProfile().check_alerts("dog") == []
+
+
+def test_check_alerts_names_each_out_of_range_vital() -> None:
+    """High heart rate and low SpO2 each produce one readable alert; species case is ignored."""
+    profile = HealthProfile()
+    profile.add_reading(
+        replace(normal_dog_reading(at("08:00")), heart_rate_bpm=152, spo2_percent=92.5)
+    )
+
+    alerts = profile.check_alerts("Dog")
+
+    assert len(alerts) == 2
+    assert any("Heart rate 152 bpm is above" in a and "60 to 140" in a for a in alerts)
+    assert any("SpO2 92.5% is below" in a for a in alerts)
+
+
+def test_check_alerts_uses_only_the_latest_reading() -> None:
+    """An old bad reading doesn't alert once a newer normal one exists."""
+    profile = HealthProfile()
+    profile.add_reading(replace(normal_dog_reading(at("08:00")), temperature_c=40.1))
+    profile.add_reading(normal_dog_reading(at("09:00")))
+
+    assert profile.check_alerts("dog") == []
+
+
+def test_daily_summary_with_no_readings() -> None:
+    """A day with no readings has zero totals and None averages."""
+    summary = HealthProfile().daily_summary(DAY)
+
+    assert summary["readings"] == 0
+    assert summary["avg_heart_rate"] is None
+    assert summary["avg_spo2"] is None
+    assert summary["avg_temperature"] is None
+    assert summary["avg_respiratory_rate"] is None
+    assert summary["latest_sleep_score"] is None
+    assert summary["total_steps"] == 0
+    assert summary["symptoms"] == 0
+
+
+def test_daily_summary_uses_that_day_only_and_latest_totals() -> None:
+    """Decision 2: averages cover that day; totals come from the day's latest reading, not a sum."""
+    profile = HealthProfile()
+    base = normal_dog_reading(at("08:00"))
+    profile.add_reading(replace(base, timestamp=at("18:00"), heart_rate_bpm=110,
+                                steps=6000, distance_km=3.0, calories_burned=240,
+                                sleep_score=70))
+    profile.add_reading(replace(base, heart_rate_bpm=90, steps=1000))
+    profile.add_reading(replace(base, timestamp=at("08:00", DAY - timedelta(days=1)),
+                                heart_rate_bpm=200, steps=9999))
+    profile.log_symptom(SymptomEntry(DAY, "Limping", Severity.MODERATE))
+    profile.log_symptom(SymptomEntry(DAY - timedelta(days=1), "Sneezing", Severity.MILD))
+
+    summary = profile.daily_summary(DAY)
+
+    assert summary["readings"] == 2
+    assert summary["avg_heart_rate"] == 100.0
+    assert summary["total_steps"] == 6000
+    assert summary["total_distance_km"] == 3.0
+    assert summary["total_calories"] == 240
+    assert summary["latest_sleep_score"] == 70
+    assert summary["symptoms"] == 1
