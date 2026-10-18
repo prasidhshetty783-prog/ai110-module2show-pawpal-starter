@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import math
 from datetime import date, datetime, time as dt_time
 from pathlib import Path
 from urllib.parse import quote
@@ -49,131 +50,165 @@ DATA_FILE = "data.json"
 TABS = ["Schedule", "Health", "Shop"]
 MAX_READINGS_SHOWN = 10
 
-# How each daily_summary() key reads in the Health tab: (label, unit suffix).
-SUMMARY_LABELS = [
-    ("readings", "Readings", ""),
+# How each daily_summary() key reads in the Health tab: (key, label, unit suffix).
+# The three headline stats come first; the other seven sit in a quieter row below.
+SUMMARY_MAIN = [
     ("avg_heart_rate", "Average heart rate", " bpm"),
-    ("avg_spo2", "Average SpO2", "%"),
-    ("avg_temperature", "Average temperature", " °C"),
-    ("avg_respiratory_rate", "Average breathing rate", "/min"),
     ("total_steps", "Steps", ""),
-    ("total_distance_km", "Distance", " km"),
-    ("total_calories", "Calories burned", " kcal"),
-    ("latest_sleep_score", "Latest sleep score", "/100"),
-    ("symptoms", "Symptoms logged", ""),
+    ("latest_sleep_score", "Sleep score", "/100"),
 ]
+SUMMARY_MORE = [
+    ("readings", "readings", ""),
+    ("avg_spo2", "average SpO2", "%"),
+    ("avg_temperature", "average temperature", " °C"),
+    ("avg_respiratory_rate", "average breathing", "/min"),
+    ("total_distance_km", "distance", " km"),
+    ("total_calories", "burned", " kcal"),
+    ("symptoms", "symptoms logged", ""),
+]
+# Shown as whole numbers; every other number keeps its own precision.
+WHOLE_NUMBER_KEYS = {"avg_heart_rate", "avg_respiratory_rate"}
 
 
 # ---------------------------------------------------------------------------
 # Look and feel: one style block, line icons, and the pet drawings
 # ---------------------------------------------------------------------------
 
-# Colors are the same tokens as .streamlit/config.toml; color only carries meaning.
+# Colors are the same tokens as .streamlit/config.toml. Text tokens pass WCAG AA on the
+# cream page, white cards, the four pet tints, and the sage / honey fills.
 _CSS = """
 :root {
-  --pp-bg: #0B0C0E;
-  --pp-surface: #15171A;
-  --pp-border: #24272B;
-  --pp-border-hi: #3A3F45;
-  --pp-text: #F2F3F5;
-  --pp-muted: #8B9096;
-  --pp-line: #C9CDD2;
-  --pp-fill: #1E2125;
-  --pp-green: #34D399;
-  --pp-amber: #F5B841;
-  --pp-red: #F87171;
-  --pp-radius: 12px;
+  --pp-bg: #FBF6EF;
+  --pp-card: #FFFFFF;
+  --pp-border: #EDE3D8;
+  --pp-field: #9C8A7D;  /* 3:1 boundary for form fields */
+  --pp-ink: #2E2522;
+  --pp-muted: #6E5F56;
+  --pp-coral: #E8866E;  /* decoration only: 2.6:1 */
+  --pp-coral-deep: #C2553D;
+  --pp-link: #B4513A;
+  --pp-peach: #FCE6DC;
+  --pp-sage-tint: #E3EFE6;
+  --pp-sky: #E1ECF5;
+  --pp-lavender: #ECE6F4;
+  --pp-sage: #356B4E;
+  --pp-sage-fill: #DCEBDF;
+  --pp-sage-bar: #7FB08F;
+  --pp-honey: #84540C;
+  --pp-honey-fill: #F6E7C8;
+  --pp-brick: #B23A2E;
+  --pp-neutral-fill: #F3ECE4;
+  --pp-radius: 16px;
+  --pp-shadow: 0 8px 24px rgba(46, 37, 34, .10);
+  --pp-serif: "Fraunces", Georgia, serif;
 }
 
-[data-testid="stMainBlockContainer"] { padding-top: 3.5rem; padding-bottom: 6rem; }
+/* Clear Streamlit's fixed top bar so the serif title isn't painted over. */
+[data-testid="stMainBlockContainer"] { padding-top: 4.5rem; padding-bottom: 6rem; }
 
-/* Buttons: primary is light with a dark label, tertiary is quiet text. */
-[data-testid^="stBaseButton-primary"],
-[data-testid^="stBaseButton-primary"] p { color: var(--pp-bg) !important; }
-/* Anything else Streamlit fills with the light primary color gets dark text too. */
-[data-testid="stMultiSelectTagsContainer"] > span > span {
-  background: var(--pp-border) !important; border: 1px solid var(--pp-border-hi);
+/* Form fields get a 3:1 border; cards keep the soft one. :focus-within is left
+   alone so Streamlit's deep-coral focus border still shows. */
+:is([data-testid="stTextInputRootElement"], [data-baseweb="input"], [data-baseweb="textarea"],
+    [data-baseweb="select"] > div, [data-testid="stNumberInputContainer"],
+    [data-testid="stSelectbox"] [role="group"], [data-testid="stMultiSelect"] [role="group"],
+    [data-testid="stTimeInputTimeDisplay"], [data-testid="stDateInputField"]):not(:focus-within) {
+  border-color: var(--pp-field) !important;
 }
-[data-testid="stMultiSelectTagsContainer"] > span > span * { color: var(--pp-text) !important; }
+
 [data-testid="stBaseButton-tertiary"] { color: var(--pp-muted); }
-[data-testid="stBaseButton-tertiary"]:hover { color: var(--pp-text); }
+[data-testid="stBaseButton-tertiary"]:hover { color: var(--pp-link); }
 
-/* Tabs: muted labels with a thin underline on the open tab. */
+/* Tabs: muted labels; the open tab is ink with Streamlit's coral underline. */
 [data-testid="stTabs"] [role="tablist"] { gap: 28px; margin-bottom: 8px; }
 [data-testid="stTab"] { color: var(--pp-muted); transition: color 200ms ease-out; }
-[data-testid="stTab"] p { font-size: 15px; font-weight: 500; color: inherit !important; }
+[data-testid="stTab"] p { font-size: 15px; font-weight: 600; color: inherit !important; }
 [data-testid="stTab"]:hover,
-[data-testid="stTab"][aria-selected="true"] { color: var(--pp-text); }
+[data-testid="stTab"][aria-selected="true"] { color: var(--pp-ink); }
 
-/* Expanders hold the forms, so they sit quietly on the surface color. */
+/* Expanders hold the forms, so they sit on plain white cards. */
 [data-testid="stExpander"] details {
-  background: var(--pp-surface); border: 1px solid var(--pp-border); border-radius: var(--pp-radius);
+  background: var(--pp-card); border: 1px solid var(--pp-border); border-radius: var(--pp-radius);
 }
-[data-testid="stExpander"] summary p { font-weight: 500; }
+[data-testid="stExpander"] summary p { font-weight: 600; }
 
 /* Header and summary */
 .pp-head { margin-bottom: 8px; }
+.pp-brand { display: flex; align-items: center; gap: 10px; }
+.pp-paw { flex: none; width: 30px; height: 30px; background: center / contain no-repeat; }
 .pp-h1 {
-  margin: 0; font-size: 36px; font-weight: 600; line-height: 1.1;
-  letter-spacing: -0.02em; color: var(--pp-text);
+  margin: 0; font-family: var(--pp-serif); font-size: 36px; font-weight: 600;
+  line-height: 1.1; letter-spacing: -0.01em; color: var(--pp-ink);
 }
-.pp-date { margin: 8px 0 0; font-size: 15px; color: var(--pp-muted); }
+.pp-greet { margin: 20px 0 0; font-family: var(--pp-serif); font-size: 22px; font-weight: 500; color: var(--pp-ink); }
+.pp-date { margin: 4px 0 0; font-size: 15px; color: var(--pp-muted); }
 .pp-summary {
   display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
-  gap: 16px; margin-top: 32px; padding: 24px;
-  background: var(--pp-surface); border: 1px solid var(--pp-border); border-radius: var(--pp-radius);
+  gap: 16px; margin-top: 28px; padding: 24px;
+  background: var(--pp-card); border: 1px solid var(--pp-border); border-radius: var(--pp-radius);
 }
-.pp-big {
-  font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums; color: var(--pp-text);
+.pp-big { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--pp-ink); }
+.pp-used {
+  font-family: var(--pp-serif); font-size: 44px; font-weight: 600; line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
-.pp-big .pp-of { font-size: 20px; font-weight: 500; color: var(--pp-muted); }
-.pp-big.warn .pp-used { color: var(--pp-amber); }
+.pp-big.warn .pp-used { color: var(--pp-honey); }
+.pp-of { font-size: 17px; color: var(--pp-muted); }
 .pp-sum-sub { margin-top: 10px; font-size: 14px; color: var(--pp-muted); }
 .pp-chip {
   display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px;
-  font-size: 13px; font-weight: 500; color: var(--pp-text);
-  background: var(--pp-bg); border: 1px solid var(--pp-border); border-radius: 999px;
+  font-size: 13px; font-weight: 600; line-height: 1.2; border-radius: 999px;
+  color: var(--pp-muted); background: var(--pp-neutral-fill);
 }
+.pp-chip.ok { color: var(--pp-sage); background: var(--pp-sage-fill); }
+.pp-chip.warn { color: var(--pp-honey); background: var(--pp-honey-fill); }
+.pp-chip.ok .pp-dot, .pp-chip.warn .pp-dot { background: currentColor; border: 0; }
 
-/* Status dots: green planned/healthy, amber attention, red error, ring = neutral. */
+/* Status dots: sage planned/healthy, honey attention, brick error, ring = neutral. */
 .pp-dot {
   display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%;
-  box-sizing: border-box; border: 1.5px solid var(--pp-muted);
+  box-sizing: border-box; border: 1.5px solid currentColor;
 }
-.pp-dot.ok { background: var(--pp-green); border: 0; box-shadow: 0 0 0 3px rgba(52, 211, 153, .14); }
-.pp-dot.warn { background: var(--pp-amber); border: 0; box-shadow: 0 0 0 3px rgba(245, 184, 65, .14); }
-.pp-dot.err { background: var(--pp-red); border: 0; box-shadow: 0 0 0 3px rgba(248, 113, 113, .14); }
+.pp-dot.ok { background: var(--pp-sage); border: 0; box-shadow: 0 0 0 3px var(--pp-sage-fill); }
+.pp-dot.warn { background: var(--pp-honey); border: 0; box-shadow: 0 0 0 3px var(--pp-honey-fill); }
+.pp-dot.err { background: var(--pp-brick); border: 0; box-shadow: 0 0 0 3px #F8E1DC; }
 .pp-sr {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip: rect(0 0 0 0); white-space: nowrap;
 }
 
-/* Pet gallery */
+/* Pet gallery: tints cycle by pet order. */
 .pp-gallery {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 16px; margin: 8px 0 24px;
+  gap: 16px; margin: 8px 0 28px;
 }
 .pp-card {
-  padding: 16px 16px 18px; outline: none;
-  background: var(--pp-surface); border: 1px solid var(--pp-border); border-radius: var(--pp-radius);
-  transition: transform 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out;
+  position: relative; padding: 16px 16px 18px; outline: none;
+  background: var(--pp-card); border: 1px solid rgba(46, 37, 34, .06); border-radius: var(--pp-radius);
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
 }
-.pp-card:hover, .pp-card:focus-visible {
-  transform: translateY(-4px); border-color: var(--pp-border-hi);
-  box-shadow: 0 14px 32px -16px rgba(0, 0, 0, .7), 0 0 28px rgba(242, 243, 245, .06);
-}
-.pp-card:focus-visible { border-color: var(--pp-text); }
+.pp-card.tint-0 { background: var(--pp-peach); }
+.pp-card.tint-1 { background: var(--pp-sage-tint); }
+.pp-card.tint-2 { background: var(--pp-sky); }
+.pp-card.tint-3 { background: var(--pp-lavender); }
+.pp-card:hover, .pp-card:focus-visible { transform: translateY(-4px); box-shadow: var(--pp-shadow); }
+.pp-card:focus-visible { outline: 2px solid var(--pp-coral-deep); outline-offset: 2px; }
 .pp-card.is-new { animation: pp-enter 520ms cubic-bezier(.2, .7, .2, 1) backwards; }
+.pp-card .pp-chip { position: absolute; top: 12px; right: 12px; padding: 4px 10px; font-size: 11px; }
 /* The drawing box has the SVG's exact 140:100 shape, so each layer lines up and
    transform-origin percentages land on the right joint. */
-.pp-art { position: relative; width: 134px; height: 96px; margin: 0 auto; }
+.pp-art { position: relative; width: 100%; max-width: 134px; aspect-ratio: 140 / 100; margin: 0 auto; }
 .pp-art span { position: absolute; inset: 0; background: center / 100% 100% no-repeat; }
 .pp-name {
-  margin-top: 12px; font-size: 16px; font-weight: 600; color: var(--pp-text);
+  margin-top: 12px; font-family: var(--pp-serif); font-size: 19px; font-weight: 600; color: var(--pp-ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .pp-meta { margin-top: 2px; font-size: 13px; color: var(--pp-muted); }
+.pp-today { margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--pp-ink); }
+.pp-bar {
+  height: 4px; margin-top: 6px; border-radius: 999px; overflow: hidden;
+  background: rgba(46, 37, 34, .08);
+}
+.pp-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--pp-sage-bar); }
 
 /* Each species has its own move while hovered or keyboard-focused. */
 .pp-dog:is(:hover, :focus-visible) .tail { animation: pp-wag 600ms ease-in-out infinite; }
@@ -196,40 +231,47 @@ _CSS = """
 @keyframes pp-hop { 0%, 100% { transform: translateY(0); } 45% { transform: translateY(-7px); } }
 @keyframes pp-blink { 0%, 35%, 65%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.1); } }
 @keyframes pp-shadow {
-  0%, 100% { transform: scaleX(1); opacity: .45; } 45% { transform: scaleX(.7); opacity: .25; }
+  0%, 100% { transform: scaleX(1); opacity: 1; } 45% { transform: scaleX(.7); opacity: .55; }
 }
 
 /* List rows */
 .pp-list {
-  background: var(--pp-surface); border: 1px solid var(--pp-border);
+  background: var(--pp-card); border: 1px solid var(--pp-border);
   border-radius: var(--pp-radius); overflow: hidden;
 }
 .pp-row { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 12px 16px; }
 .pp-list .pp-row + .pp-row { border-top: 1px solid var(--pp-border); }
 .pp-ico {
-  display: grid; place-items: center; flex: none; width: 36px; height: 36px;
-  color: var(--pp-text); background: var(--pp-bg); border: 1px solid var(--pp-border); border-radius: 10px;
+  display: grid; place-items: center; flex: none; width: 38px; height: 38px;
+  color: var(--pp-coral-deep); background: var(--pp-peach); border-radius: 12px;
 }
 .pp-i {
   display: block; width: 18px; height: 18px; background: currentColor;
   -webkit-mask: var(--pp-icon) center / contain no-repeat; mask: var(--pp-icon) center / contain no-repeat;
 }
 .pp-txt { flex: 1; min-width: 0; }
-.pp-title { font-size: 15px; font-weight: 500; line-height: 1.35; color: var(--pp-text); overflow-wrap: anywhere; }
+.pp-title { font-size: 15px; font-weight: 600; line-height: 1.35; color: var(--pp-ink); overflow-wrap: anywhere; }
 .pp-sub { margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--pp-muted); overflow-wrap: anywhere; }
 .pp-right {
   display: flex; align-items: center; gap: 10px; flex: none;
   font-size: 13px; color: var(--pp-muted); font-variant-numeric: tabular-nums;
 }
 .pp-right .pp-i { width: 16px; height: 16px; color: var(--pp-muted); }
-.pp-label { margin: 16px 0 8px; font-size: 13px; font-weight: 500; color: var(--pp-muted); }
-.pp-label b { font-weight: 600; color: var(--pp-text); }
+/* On phones, rows with meta text (scores, prices) drop it under the title so the
+   title gets the full width; rows with only a dot or chevron keep it on the right. */
+@media (max-width: 480px) {
+  .pp-row:has(> .pp-right > span:not([class])) { flex-wrap: wrap; row-gap: 4px; }
+  .pp-row:has(> .pp-right > span:not([class])) .pp-txt { flex-basis: calc(100% - 52px); }
+  .pp-row:has(> .pp-right > span:not([class])) .pp-right { margin-left: 52px; }
+}
+.pp-label { margin: 18px 0 8px; font-size: 13px; color: var(--pp-muted); }
+.pp-label b { font-weight: 700; color: var(--pp-ink); }
 .pp-empty { margin: 0; font-size: 14px; color: var(--pp-muted); }
-.pp-explain { margin: 0; padding: 16px 20px 16px 36px; font-size: 14px; line-height: 1.6; color: var(--pp-muted); }
+.pp-explain { margin: 0; padding: 16px 20px 16px 36px; font-size: 14px; line-height: 1.65; color: var(--pp-muted); }
 
 /* Rows that carry a button are Streamlit containers styled to match .pp-list. */
 [class*="st-key-pp-alist"] {
-  gap: 0; background: var(--pp-surface); border: 1px solid var(--pp-border);
+  gap: 0; background: var(--pp-card); border: 1px solid var(--pp-border);
   border-radius: var(--pp-radius); overflow: hidden;
 }
 [class*="st-key-pp-arow"] { padding-right: 12px; }
@@ -237,13 +279,37 @@ _CSS = """
 
 /* Health summary stats */
 .pp-stats {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 0;
-  padding: 8px 0; background: var(--pp-surface); border: 1px solid var(--pp-border);
-  border-radius: var(--pp-radius);
+  background: var(--pp-card); border: 1px solid var(--pp-border); border-radius: var(--pp-radius);
 }
+.pp-stats-main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 12px 0 8px; }
 .pp-stat { padding: 10px 16px; }
-.pp-stat-v { font-size: 18px; font-weight: 600; color: var(--pp-text); font-variant-numeric: tabular-nums; }
-.pp-stat-l { margin-top: 2px; font-size: 12px; color: var(--pp-muted); }
+.pp-stat-v {
+  font-family: var(--pp-serif); font-size: 30px; font-weight: 600; line-height: 1.1;
+  color: var(--pp-ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.pp-stat-l { margin-top: 4px; font-size: 13px; color: var(--pp-muted); }
+.pp-stats-more {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 12px 16px 14px;
+  border-top: 1px solid var(--pp-border); font-size: 13px; color: var(--pp-muted);
+}
+.pp-stats-more b { font-weight: 700; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) { .pp-stat-v { font-size: 24px; } .pp-stat { padding: 10px 12px; } }
+
+/* Recommendation reasons as quiet pills, with the exact scoring one click away. */
+.pp-pills { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px 68px; }
+.pp-pill {
+  padding: 3px 10px; font-size: 12px; font-weight: 600; line-height: 1.4;
+  color: var(--pp-muted); background: var(--pp-neutral-fill); border-radius: 999px;
+}
+[class*="st-key-pp-rec-"] [data-testid="stExpander"] { margin: 0 16px 12px 68px; width: auto; }
+[class*="st-key-pp-rec-"] [data-testid="stExpander"] details { border: 0; background: transparent; }
+[class*="st-key-pp-rec-"] [data-testid="stExpander"] summary { padding: 2px 0; min-height: 0; }
+[class*="st-key-pp-rec-"] [data-testid="stExpander"] summary p { font-size: 13px; color: var(--pp-link); }
+.pp-scored { margin: 0; padding: 0 0 0 18px; font-size: 13px; line-height: 1.6; color: var(--pp-muted); }
+@media (max-width: 480px) {
+  .pp-pills { padding-left: 16px; }
+  [class*="st-key-pp-rec-"] [data-testid="stExpander"] { margin-left: 16px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -273,7 +339,9 @@ _ICONS: dict[str, str] = {
     '<path d="M8 12h2l1-2 2 4 1-2h2"/>',
     "note": '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
     "shield": '<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>',
-    "food": '<path d="M6 8h12l-1 13H7z"/><path d="M9 8a3 3 0 0 1 6 0"/>',
+    "food": '<path d="M2.5 12.5h19"/><path d="M4 12.5a8 6.5 0 0 0 16 0"/><path d="M8 20.5h8"/>'
+    '<circle cx="8.5" cy="9.6" r="1.4"/><circle cx="12" cy="8.2" r="1.4"/>'
+    '<circle cx="15.5" cy="9.6" r="1.4"/>',
     "cart": '<path d="M3 4h2.5l2 11.5h10.5l2-8H7"/><circle cx="9" cy="19.5" r="1"/>'
     '<circle cx="17" cy="19.5" r="1"/>',
 }
@@ -297,13 +365,18 @@ _ICON_CSS = "".join(
     for name, body in _ICONS.items()
 )
 
-# Original line drawings on a 140 x 100 grid. Each moving part (tail, head, ear,
-# eyes) is its own full-size layer, so CSS can rotate it around its joint.
-_LN = 'fill="none" stroke="#C9CDD2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
-_THIN = 'fill="none" stroke="#C9CDD2" stroke-width="1.2" stroke-linecap="round" opacity=".7"'
-_FL = 'fill="#1E2125" stroke="#C9CDD2" stroke-width="2" stroke-linejoin="round"'
-_INK = 'fill="#F2F3F5"'
-_SHADOW = 'fill="#000" opacity=".45"'
+# Original line drawings on a 140 x 100 grid, in warm colors: cocoa outline, cream and
+# caramel fills, a coral collar. Each moving part (tail, head, ear, eyes) is its own
+# full-size layer, so CSS can rotate it around its joint.
+_OUTLINE = "#4A3A33"
+_LN = f'fill="none" stroke="{_OUTLINE}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+_THIN = f'fill="none" stroke="{_OUTLINE}" stroke-width="1.3" stroke-linecap="round" opacity=".6"'
+_CREAM = f'fill="#FFF8EE" stroke="{_OUTLINE}" stroke-width="2" stroke-linejoin="round"'
+_CARAMEL = f'fill="#E3B488" stroke="{_OUTLINE}" stroke-width="2" stroke-linejoin="round"'
+_INK = 'fill="#2E2522"'
+_SHADOW = 'fill="#2E2522" opacity=".12"'
+_COLLAR = 'fill="none" stroke="#E8866E" stroke-width="4" stroke-linecap="round"'
+_CHEEK = 'fill="#E8866E" opacity=".55"'
 
 # (species, layer class) -> (SVG body, transform-origin at that part's joint).
 _PET_PARTS: dict[tuple[str, str], tuple[str, str]] = {
@@ -311,16 +384,19 @@ _PET_PARTS: dict[tuple[str, str], tuple[str, str]] = {
     ("dog", "base"): (
         f'<ellipse {_SHADOW} cx="72" cy="94" rx="38" ry="3.5"/>'
         f'<path {_LN} d="M52 74 V90 M62 76 V90 M86 76 V90 M96 73 V90"/>'
-        f'<ellipse {_FL} cx="74" cy="60" rx="30" ry="17"/>',
+        f'<ellipse {_CREAM} cx="74" cy="60" rx="30" ry="17"/>'
+        f'<path {_CARAMEL} d="M80 48 C88 46 94 50 94 56 C88 58 82 56 80 48 Z"/>',
         "50% 50%",
     ),
     ("dog", "head"): (
-        f'<path {_FL} d="M52 30 C61 30 63 43 58 51 C54 46 51 40 52 30 Z"/>'
-        f'<circle {_FL} cx="46" cy="42" r="15"/>'
-        f'<ellipse {_FL} cx="32" cy="48" rx="10" ry="7"/>'
+        f'<circle {_CREAM} cx="46" cy="42" r="15"/>'
+        f'<path {_CARAMEL} d="M52 30 C61 30 63 43 58 51 C54 46 51 40 52 30 Z"/>'
+        f'<ellipse {_CREAM} cx="32" cy="48" rx="10" ry="7"/>'
         f'<circle {_INK} cx="23.5" cy="46" r="2.6"/>'
         f'<circle {_INK} cx="42" cy="38" r="2"/>'
-        f'<path {_THIN} d="M28 53 Q32 55.5 36 53"/>',
+        f'<path {_THIN} d="M28 53 Q32 55.5 36 53"/>'
+        f'<path {_COLLAR} d="M49 55 Q55 59 61 53"/>'
+        f'<circle fill="#E8866E" cx="55" cy="59.5" r="2"/>',
         "39.3% 52%",
     ),
     ("cat", "tail"): (
@@ -328,29 +404,35 @@ _PET_PARTS: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("cat", "base"): (
         f'<ellipse {_SHADOW} cx="70" cy="94" rx="30" ry="3.5"/>'
-        f'<path {_FL} d="M52 90 C48 72 54 58 70 56 C86 58 92 72 88 90 Z"/>'
+        f'<path {_CARAMEL} d="M52 90 C48 72 54 58 70 56 C86 58 92 72 88 90 Z"/>'
+        f'<path fill="#FFF8EE" d="M62 89 C60 78 64 68 70 67 C76 68 80 78 78 89 Z"/>'
         f'<path {_THIN} d="M63 90 V80 M77 90 V80"/>'
-        f'<path {_FL} d="M54 34 L53 15 L66 27 Z"/>',
+        f'<path {_CARAMEL} d="M54 34 L53 15 L66 27 Z"/>',
         "50% 50%",
     ),
-    ("cat", "ear"): (f'<path {_FL} d="M86 34 L87 15 L74 27 Z"/>', "57.1% 32%"),
+    ("cat", "ear"): (f'<path {_CARAMEL} d="M86 34 L87 15 L74 27 Z"/>', "57.1% 32%"),
     ("cat", "face"): (
-        f'<circle {_FL} cx="70" cy="40" r="17"/>'
+        f'<circle {_CARAMEL} cx="70" cy="40" r="17"/>'
         f'<ellipse {_INK} cx="63" cy="39" rx="1.8" ry="2.8"/>'
         f'<ellipse {_INK} cx="77" cy="39" rx="1.8" ry="2.8"/>'
         f'<path {_INK} d="M68 45 H72 L70 47.5 Z"/>'
-        f'<path {_THIN} d="M59 46 H48 M59 49 L49 52 M81 46 H92 M81 49 L91 52"/>',
+        f'<path {_THIN} d="M59 46 H48 M59 49 L49 52 M81 46 H92 M81 49 L91 52"/>'
+        f'<path {_COLLAR} d="M59 56.5 Q70 61 81 56.5"/>'
+        f'<circle fill="#E8866E" cx="70" cy="61.5" r="2"/>',
         "50% 50%",
     ),
     ("other", "shadow"): (f'<ellipse {_SHADOW} cx="70" cy="94" rx="24" ry="3.5"/>', "50% 94%"),
     ("other", "base"): (
-        f'<circle {_FL} cx="56" cy="44" r="7"/>'
-        f'<circle {_FL} cx="84" cy="44" r="7"/>'
-        f'<ellipse {_FL} cx="70" cy="66" rx="27" ry="24"/>'
+        f'<circle {_CARAMEL} cx="56" cy="44" r="7"/>'
+        f'<circle {_CARAMEL} cx="84" cy="44" r="7"/>'
+        f'<ellipse {_CARAMEL} cx="70" cy="66" rx="27" ry="24"/>'
+        f'<ellipse fill="#FFF8EE" cx="70" cy="74" rx="16" ry="13"/>'
+        f'<circle {_CHEEK} cx="56" cy="69" r="3.5"/>'
+        f'<circle {_CHEEK} cx="84" cy="69" r="3.5"/>'
         f'<path {_INK} d="M68 69 H72 L70 71.5 Z"/>'
         f'<path {_THIN} d="M66 74 Q70 77 74 74"/>'
-        f'<ellipse {_FL} cx="59" cy="89" rx="7" ry="3"/>'
-        f'<ellipse {_FL} cx="81" cy="89" rx="7" ry="3"/>',
+        f'<ellipse {_CREAM} cx="59" cy="89" rx="7" ry="3"/>'
+        f'<ellipse {_CREAM} cx="81" cy="89" rx="7" ry="3"/>',
         "50% 50%",
     ),
     ("other", "eye"): (
@@ -359,10 +441,26 @@ _PET_PARTS: dict[tuple[str, str], tuple[str, str]] = {
         "50% 62%",
     ),
 }
-_ART_CSS = "".join(
-    f".pp-{species} .{part} {{ background-image: {_svg_url(body)}; transform-origin: {origin}; }}\n"
-    for (species, part), (body, origin) in _PET_PARTS.items()
-) + ".pp-other .hop { background: none; transform-origin: 50% 100%; }\n"
+
+# The paw-print mark beside "PawPal+", on the 24 x 24 icon grid.
+_PAW = (
+    '<ellipse cx="5.2" cy="10" rx="2.1" ry="2.7" transform="rotate(-18 5.2 10)"/>'
+    '<ellipse cx="9.4" cy="5.6" rx="2.1" ry="2.7" transform="rotate(-6 9.4 5.6)"/>'
+    '<ellipse cx="14.6" cy="5.6" rx="2.1" ry="2.7" transform="rotate(6 14.6 5.6)"/>'
+    '<ellipse cx="18.8" cy="10" rx="2.1" ry="2.7" transform="rotate(18 18.8 10)"/>'
+    '<path d="M12 11.5c-3.4 0-6.5 3.6-6.5 6.3 0 1.8 1.4 2.7 3 2.7 1.3 0 2.2-.6 3.5-.6'
+    's2.2.6 3.5.6c1.6 0 3-.9 3-2.7 0-2.7-3.1-6.3-6.5-6.3z"/>'
+)
+_PAW_FILL = 'fill="#E8866E"'
+
+_ART_CSS = (
+    "".join(
+        f".pp-{species} .{part} {{ background-image: {_svg_url(body)}; transform-origin: {origin}; }}\n"
+        for (species, part), (body, origin) in _PET_PARTS.items()
+    )
+    + ".pp-other .hop { background: none; transform-origin: 50% 100%; }\n"
+    + f".pp-paw {{ background-image: {_svg_url(_PAW, _PAW_FILL)}; }}\n"
+)
 
 # Layer order is paint order. The critter's eyes sit inside the hop so they move with it.
 _PET_LAYERS: dict[str, str] = {
@@ -460,12 +558,15 @@ def _editable_tasks(pet: Pet) -> list[Task]:
 
 def _task_label(task: Task) -> str:
     """Return a short label for a task in a dropdown."""
-    return f"{task.due_date.isoformat()} {task.time} · {task.description} ({task.task_type.value})"
+    return (
+        f"{task.due_date.isoformat()} {_clock(task.time)} · {task.description} "
+        f"({task.task_type.value})"
+    )
 
 
 def _product_label(product: FoodProduct) -> str:
     """Return a short label for a product in a dropdown (no "$": labels render Markdown)."""
-    return f"{product.brand} · {product.name} ({product.price:.2f})"
+    return f"{product.brand} · {product.name} ({product.price:,.2f})"
 
 
 def _escape_dollars(text: str) -> str:
@@ -480,7 +581,18 @@ def _money(amount: float) -> str:
 
 def _plural(count: int, word: str) -> str:
     """Return "1 task" or "3 tasks"."""
-    return f"{count} {word}{'' if count == 1 else 's'}"
+    return f"{count:,} {word}{'' if count == 1 else 's'}"
+
+
+def _clock(value: datetime | dt_time | str) -> str:
+    """Return a 12-hour time like "3:16 PM" (no seconds) from a time, datetime, or "HH:MM"."""
+    t = _to_time(value) if isinstance(value, str) else value
+    return f"{t.hour % 12 or 12}:{t.minute:02d} {'AM' if t.hour < 12 else 'PM'}"
+
+
+def _whole(value: float) -> int:
+    """Round half up to a whole number (round() would send 20.5 to 20)."""
+    return math.floor(value + 0.5)
 
 
 def _day_label(day: date) -> str:
@@ -549,37 +661,69 @@ def _empty(text: str) -> None:
 
 def _task_subtitle(task: Task, with_pet: bool = False) -> str:
     """Return a task's muted detail line."""
-    parts = [_day_label(task.due_date), task.time]
+    parts = [_day_label(task.due_date), _clock(task.time)]
     if with_pet:
         parts.append(task.pet_name)
-    parts += [f"{task.duration_minutes} min", f"{task.priority.value} priority"]
+    parts += [f"{task.duration_minutes:,} min", f"{task.priority.value} priority"]
     if task.frequency is not Frequency.ONCE:
         parts.append(task.frequency.value)
     return " · ".join(parts)
 
 
+def _is_monitored(pet: Pet) -> bool:
+    """Return True if the pet's species has normal vital ranges, so alerts can work."""
+    return pet.species in VITAL_RANGES
+
+
 def _health_status() -> tuple[str, str]:
-    """Return the header chip: any alert wins, then "no readings", else all healthy."""
-    alerts = sum(len(p.health.check_alerts(p.species)) for p in owner.pets)
+    """Return the header chip, counting only pets whose vitals can actually be checked.
+
+    Any alert wins; then a monitored pet that has never synced; then "healthy",
+    which says "Monitored pets" when some pets have no normal ranges.
+    """
+    if not owner.pets:
+        return "", "No pets yet"
+    monitored = [p for p in owner.pets if _is_monitored(p)]
+    if not monitored:
+        return "", "No monitored pets"
+    alerts = sum(len(p.health.check_alerts(p.species)) for p in monitored)
     if alerts:
         return "warn", _plural(alerts, "health alert")
-    if not owner.pets or any(p.health.latest_reading() is None for p in owner.pets):
+    if any(p.health.latest_reading() is None for p in monitored):
         return "", "No readings yet"
+    if len(monitored) < len(owner.pets):
+        return "ok", "Monitored pets healthy"
     return "ok", "All pets healthy"
 
 
-def _pet_card(pet: Pet, entry: str | None) -> str:
+def _greeting(owner_name: str) -> str:
+    """Return "Good morning/afternoon/evening, {name}" for the current hour."""
+    hour = datetime.now().hour
+    part = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
+    return f"Good {part}, {owner_name}" if owner_name else f"Good {part}"
+
+
+def _pet_card(pet: Pet, index: int, entry: str | None) -> str:
     """Return one gallery card. `entry` marks a just-added pet so its card fades in once."""
     kind = pet.species if pet.species in _PET_LAYERS else "other"
     age = f"{pet.age_years:g} {'yr' if pet.age_years == 1 else 'yrs'}"
-    classes = f"pp-card pp-{kind}" + (" is-new" if entry else "")
+    todays = [t for t in pet.get_tasks() if t.due_date == today]
+    done = sum(t.completed for t in todays)
+    progress = f"Today: {done} of {len(todays)} done" if todays else "Today: nothing planned"
+    percent = round(100 * done / len(todays)) if todays else 0
+    monitored = _is_monitored(pet)
+    classes = f"pp-card pp-{kind} tint-{index % 4}" + (" is-new" if entry else "")
     data = f' data-entry="{_e(entry)}"' if entry else ""
+    chip = "" if monitored else '<span class="pp-chip">Not monitored</span>'
+    label = f"{pet.name}, {pet.species}, {age}. {progress}." + ("" if monitored else " Not monitored.")
     return (
-        f'<article class="{classes}"{data} tabindex="0" '
-        f'aria-label="{_e(pet.name)}, {_e(pet.species)}, {_e(age)}">'
+        f'<article class="{classes}"{data} tabindex="0" aria-label="{_e(label)}">{chip}'
         f'<div class="pp-art" aria-hidden="true">{_PET_LAYERS[kind]}</div>'
         f'<div class="pp-name">{_e(pet.name)}</div>'
-        f'<div class="pp-meta">{_e(pet.species)} · {_e(age)}</div></article>'
+        f'<div class="pp-meta">{_e(pet.species)} · {_e(age)}</div>'
+        f'<div class="pp-today">{_e(progress)}</div>'
+        f'<div class="pp-bar" aria-hidden="true"><span style="width: {percent}%"></span></div>'
+        "</article>"
     )
 
 
@@ -589,22 +733,56 @@ def _reading_row(reading: HealthReading, status: tuple[str, str] | None) -> str:
     return _row(
         "heart",
         f"{r.heart_rate_bpm} bpm · SpO2 {r.spo2_percent}% · {r.temperature_c} °C",
-        f"{_day_label(r.timestamp.date())} {r.timestamp:%H:%M:%S} · breathing "
-        f"{r.respiratory_rate}/min · sleep {r.sleep_score}/100 · {r.steps:,} steps · "
-        f"{r.distance_km} km · {r.calories_burned} kcal",
+        f"{_day_label(r.timestamp.date())} {_clock(r.timestamp)} · breathing "
+        f"{r.respiratory_rate:,}/min · sleep {r.sleep_score}/100 · {r.steps:,} steps · "
+        f"{r.distance_km:,} km · {r.calories_burned:,} kcal",
         status=status,
     )
 
 
+def _stat_value(summary: dict, key: str, unit: str) -> str:
+    """Format one daily_summary() value with thousands separators, or "–" if missing."""
+    value = summary[key]
+    if value is None:
+        return "–"
+    if key in WHOLE_NUMBER_KEYS:
+        value = _whole(value)
+    return f"{value:,}{unit}"
+
+
 def _stats(summary: dict) -> str:
-    """Return a daily_summary() dict as a quiet grid of value / label pairs."""
-    cells = "".join(
-        f'<div class="pp-stat"><div class="pp-stat-v">'
-        f'{"–" if summary[key] is None else _e(f"{summary[key]}{unit}")}</div>'
+    """Return a daily_summary() as three large stats with a quieter row of the rest."""
+    main = "".join(
+        f'<div class="pp-stat"><div class="pp-stat-v">{_e(_stat_value(summary, key, unit))}</div>'
         f'<div class="pp-stat-l">{_e(label)}</div></div>'
-        for key, label, unit in SUMMARY_LABELS
+        for key, label, unit in SUMMARY_MAIN
     )
-    return f'<div class="pp-stats">{cells}</div>'
+    more = "".join(
+        f"<span><b>{_e(_stat_value(summary, key, unit))}</b> {_e(label)}</span>"
+        for key, label, unit in SUMMARY_MORE
+    )
+    return (
+        f'<div class="pp-stats"><div class="pp-stats-main">{main}</div>'
+        f'<div class="pp-stats-more">{more}</div></div>'
+    )
+
+
+def _fact_pills(product: FoodProduct, pet: Pet) -> str:
+    """Return a product's key facts as pills: conditions it shares with the pet,
+    its life stage, rating, and price. These are product facts; the exact points
+    live in explain_recommendation(), shown under "How this was scored".
+    """
+    conditions = {c.lower() for c in pet.health.conditions}
+    pills = [f"Supports {s}" for s in product.supports if s.lower() in conditions]
+    young = {"dog": "Puppy formula", "cat": "Kitten formula"}.get(pet.species, "Young pet formula")
+    pills.append(
+        {"young": young, "adult": "Adult formula", "senior": "Senior formula",
+         "all": "All life stages"}.get(product.life_stage, f"{product.life_stage} formula")
+    )
+    pills += [f"Rated {product.rating:g}", f"${product.price:,.2f}"]
+    return '<div class="pp-pills">' + "".join(
+        f'<span class="pp-pill">{_e(p)}</span>' for p in pills
+    ) + "</div>"
 
 
 def _mark_done(pet: Pet, task: Task) -> None:
@@ -616,7 +794,7 @@ def _mark_done(pet: Pet, task: Task) -> None:
         return
     message = f"Marked '{task.description}' done for {pet.name}."
     if upcoming is not None:
-        message += f" Next: {_day_label(upcoming.due_date)} at {upcoming.time}."
+        message += f" Next: {_day_label(upcoming.due_date)} at {_clock(upcoming.time)}."
     _flash(message, "Schedule")
 
 
@@ -720,16 +898,20 @@ used = sum(t.duration_minutes for t in plan)
 available = owner.available_minutes
 chip_kind, chip_text = _health_status()
 
+waiting = f"{len(skip_reasons)} can wait" if skip_reasons else "nothing has to wait"
 st.html(
     '<header class="pp-head">'
-    '<h1 class="pp-h1">PawPal+</h1>'
+    '<div class="pp-brand"><span class="pp-paw" aria-hidden="true"></span>'
+    '<h1 class="pp-h1">PawPal+</h1></div>'
+    f'<p class="pp-greet">{_e(_greeting(owner.name.strip()))}</p>'
     f'<p class="pp-date">{today:%A, %B} {today.day} · {_plural(len(owner.pets), "pet")}</p>'
     '<div class="pp-summary"><div>'
     f'<div class="pp-big{" warn" if used > available else ""}">'
-    f'<span class="pp-used">{used}</span> <span class="pp-of">/ {available} min</span></div>'
-    f'<div class="pp-sum-sub">{_plural(len(plan), "task")} planned · {len(skip_reasons)} skipped</div>'
+    f'<span class="pp-used">{used:,}</span>'
+    f'<span class="pp-of">of {available:,} minutes planned</span></div>'
+    f'<div class="pp-sum-sub">{_plural(len(plan), "task")} · {waiting}</div>'
     "</div>"
-    f'<span class="pp-chip"><span class="pp-dot {chip_kind}" aria-hidden="true"></span>'
+    f'<span class="pp-chip {chip_kind}"><span class="pp-dot" aria-hidden="true"></span>'
     f"{_e(chip_text)}</span>"
     "</div></header>"
 )
@@ -738,10 +920,14 @@ _show_flash()
 if owner.pets:
     new_pet = st.session_state.pop("_new_pet", None)
     cards = [
-        _pet_card(p, f"{p.name}-{new_pet[1]}" if new_pet and new_pet[0] == p.name else None)
-        for p in owner.pets
+        _pet_card(
+            p, i, f"{p.name}-{new_pet[1]}" if new_pet and new_pet[0] == p.name else None
+        )
+        for i, p in enumerate(owner.pets)
     ]
     st.html(f'<section class="pp-gallery" aria-label="Your pets">{"".join(cards)}</section>')
+else:
+    _empty("No pets yet. Add your first companion in the sidebar.")
 
 # key + on_change="rerun" make the tabs remember the open tab, so the st.rerun()
 # after every action lands the user back on the tab they were using.
@@ -756,8 +942,65 @@ with schedule_tab:
     _show_flash("Schedule")
 
     if not owner.pets:
-        st.info("Add a pet in the sidebar to start adding tasks.")
+        st.info("No pets yet. Add your first companion in the sidebar, then plan their day here.")
     else:
+        # --- Today's plan: always shown, recomputed on every run ------------
+        st.subheader("Today's plan", anchor=False)
+        if not plan and not skip_reasons:
+            st.info("Nothing left to do today. Enjoy the quiet.")
+        else:
+            _label("Planned for today", _plural(len(plan), "task"))
+            if plan:
+                _list(
+                    [
+                        _row(
+                            _TYPE_ICON[t.task_type],
+                            t.description,
+                            _task_subtitle(t, with_pet=True),
+                            status=("ok", "planned"),
+                        )
+                        for t in plan
+                    ],
+                    "Today's plan",
+                )
+            else:
+                _empty("Nothing fits in today's time yet.")
+
+            if used <= available:
+                st.success(
+                    f"{_plural(len(plan), 'task')} planned: {used:,} of {available:,} min used "
+                    f"({available - used:,} min free)."
+                )
+            else:
+                st.warning(
+                    f"{_plural(len(plan), 'task')} planned: {used:,} min, but only {available:,} "
+                    "min available. Medication is always kept, so the plan goes over."
+                )
+
+            if skip_reasons:
+                _label("Can wait", _plural(len(skip_reasons), "task"))
+                _list(
+                    [
+                        _row(
+                            _TYPE_ICON[t.task_type],
+                            t.description,
+                            f"{_clock(t.time)} · {t.pet_name} · {t.duration_minutes:,} min · {reason}",
+                            status=("warn", "can wait"),
+                        )
+                        for t, reason in skip_reasons.items()
+                    ],
+                    "Tasks that can wait today, and why",
+                )
+
+            _label("Why each task was planned or can wait")
+            items = "".join(f"<li>{_e(line)}</li>" for line in scheduler.explain_plan(today))
+            st.html(f'<div class="pp-list"><ul class="pp-explain">{items}</ul></div>')
+
+        for warning in scheduler.detect_conflicts(today):
+            st.warning(warning, icon=":material/warning:")
+
+        # --- Tasks: add, edit, and mark done --------------------------------
+        st.subheader("Tasks", anchor=False)
         # --- Add a task -----------------------------------------------------
         with st.expander("Add a task", icon=":material/add:"):
             with st.form("add_task_form", clear_on_submit=True, border=False):
@@ -901,12 +1144,11 @@ with schedule_tab:
                         st.warning("That task could not be found. It may already be removed.")
 
         # --- Task list, with "Mark done" on each task it would complete -----
-        st.subheader("Tasks", anchor=False)
         for p_index, pet in enumerate(owner.pets):
             pet_tasks = sorted(pet.get_tasks(), key=lambda t: (t.due_date, t.time))
             _label(pet.name, _plural(len(pet_tasks), "task"))
             if not pet_tasks:
-                _empty("No tasks yet.")
+                _empty(f"Nothing on {pet.name}'s list yet.")
                 continue
             actionable = set(_editable_tasks(pet))  # Task compares by identity
             with st.container(key=f"pp-alist-tasks-{p_index}"):
@@ -941,69 +1183,6 @@ with schedule_tab:
                         ):
                             _mark_done(pet, task)
 
-    # --- Today's plan -------------------------------------------------------
-    st.subheader("Today's plan", anchor=False)
-    if st.button("Build today's plan", type="primary", icon=":material/calendar_today:"):
-        st.session_state["show_plan"] = True
-
-    # Once built, the plan stays open and is recomputed on every run, so it
-    # always reflects the latest tasks and sidebar constraints.
-    if st.session_state.get("show_plan"):
-        explanations = scheduler.explain_plan(today)
-        conflicts = scheduler.detect_conflicts(today)
-
-        if not plan and not skip_reasons:
-            st.info("Nothing left to do today.")
-        else:
-            _label("Planned", _plural(len(plan), "task"))
-            if plan:
-                _list(
-                    [
-                        _row(
-                            _TYPE_ICON[t.task_type],
-                            t.description,
-                            _task_subtitle(t, with_pet=True),
-                            status=("ok", "planned"),
-                        )
-                        for t in plan
-                    ],
-                    "Today's plan",
-                )
-            else:
-                _empty("No tasks fit today's plan.")
-
-            if used <= available:
-                st.success(
-                    f"{_plural(len(plan), 'task')} planned: {used} of {available} min used "
-                    f"({available - used} min free)."
-                )
-            else:
-                st.warning(
-                    f"{_plural(len(plan), 'task')} planned: {used} min, but only {available} "
-                    "min available. Medication is always kept, so the plan goes over."
-                )
-
-            if skip_reasons:
-                _label("Skipped", _plural(len(skip_reasons), "task"))
-                _list(
-                    [
-                        _row(
-                            _TYPE_ICON[t.task_type],
-                            t.description,
-                            f"{t.time} · {t.pet_name} · {t.duration_minutes} min · {reason}",
-                            status=("warn", "skipped"),
-                        )
-                        for t, reason in skip_reasons.items()
-                    ],
-                    "Tasks skipped today and why",
-                )
-
-            _label("Why each task was planned or skipped")
-            items = "".join(f"<li>{_e(line)}</li>" for line in explanations)
-            st.html(f'<div class="pp-list"><ul class="pp-explain">{items}</ul></div>')
-
-        for warning in conflicts:
-            st.warning(warning, icon=":material/warning:")
 
 
 # ===========================================================================
@@ -1013,7 +1192,7 @@ with schedule_tab:
 with health_tab:
     _show_flash("Health")
     if not owner.pets:
-        st.info("Add a pet in the sidebar to start tracking health.")
+        st.info("No pets yet. Add your first companion in the sidebar to look after their health.")
     else:
         pet = _pick_pet("Pet", key="health_pet")
 
@@ -1027,17 +1206,17 @@ with health_tab:
             )
             with st.expander("Pair a collar", icon=":material/link:"):
                 with st.form(f"pair_collar::{pet.name}", clear_on_submit=True, border=False):
-                    left, right = st.columns(2)
-                    device_id = left.text_input("Device ID", placeholder="e.g. COL-001")
-                    seed = right.number_input(
-                        "Seed",
-                        min_value=0,
-                        max_value=1_000_000,
-                        value=42,
-                        step=1,
-                        help="The same seed always produces the same simulated readings.",
-                    )
+                    device_id = st.text_input("Device ID", placeholder="e.g. COL-001")
                     st.caption(f"The collar is set up for {pet.name}'s species: {pet.species}.")
+                    with st.expander("Advanced (for testing)"):
+                        seed = st.number_input(
+                            "Seed",
+                            min_value=0,
+                            max_value=1_000_000,
+                            value=42,
+                            step=1,
+                            help="The same seed always produces the same simulated readings.",
+                        )
                     pair_clicked = st.form_submit_button(
                         "Pair collar", type="primary", icon=":material/link:"
                     )
@@ -1063,7 +1242,7 @@ with health_tab:
                         _row(
                             "collar",
                             f"Collar {pet.collar.device_id}",
-                            f"Battery {pet.collar.battery_percent}% · set up for {pet.species}",
+                            f"Battery {pet.collar.battery_percent:,}% · set up for {pet.species}",
                             status=("ok", "paired"),
                         )
                     )
@@ -1075,7 +1254,7 @@ with health_tab:
                             st.warning(f"{pet.name} has no collar paired.")
                         else:
                             _flash(
-                                f"New reading for {pet.name} at {reading.timestamp:%H:%M:%S}.",
+                                f"New reading for {pet.name} at {_clock(reading.timestamp)}.",
                                 "Health",
                             )
 
@@ -1085,10 +1264,13 @@ with health_tab:
         for alert in alerts:
             st.warning(alert, icon=":material/monitor_heart:")
         if not alerts:
-            if pet.health.latest_reading() is None:
-                st.info("No readings yet, so there is nothing to check.")
-            elif pet.species not in VITAL_RANGES:
-                st.info(f"There are no normal ranges for {pet.species}s, so alerts are off.")
+            if not _is_monitored(pet):
+                st.info(
+                    f"{pet.name} isn't monitored. There are no normal ranges for this "
+                    "species, so alerts are off."
+                )
+            elif pet.health.latest_reading() is None:
+                st.info(f"No readings yet. Sync the collar to check in on {pet.name}.")
             else:
                 st.success("The latest reading is within the normal range.")
         st.caption("Not veterinary advice. Contact your vet if you are worried.")
@@ -1100,10 +1282,10 @@ with health_tab:
             # check_alerts() judges the latest reading only, so only that row gets a dot.
             if alerts:
                 latest_status = ("warn", "outside the normal range")
-            elif pet.species in VITAL_RANGES:
+            elif _is_monitored(pet):
                 latest_status = ("ok", "within the normal range")
             else:
-                latest_status = ("", "no normal range for this species")
+                latest_status = ("", "not monitored")
             _list(
                 [
                     _reading_row(r, latest_status if i == 0 else None)
@@ -1127,7 +1309,7 @@ with health_tab:
                     _row(
                         "medication",
                         f"{m.name} · {m.dose}",
-                        f"{', '.join(m.times)} · {m.frequency.value} · from "
+                        f"{', '.join(_clock(t) for t in m.times)} · {m.frequency.value} · from "
                         f"{m.start_date:%b} {m.start_date.day}, {m.start_date.year}",
                     )
                     for m in pet.health.medications
@@ -1135,7 +1317,7 @@ with health_tab:
                 f"{pet.name}'s medications",
             )
         else:
-            _empty("No medications yet.")
+            _empty(f"No medications for {pet.name}.")
         with st.expander("Add a medication", icon=":material/medication:"):
             with st.form(f"add_med::{pet.name}", clear_on_submit=True, border=False):
                 left, right = st.columns(2)
@@ -1258,7 +1440,7 @@ with shop_tab:
     _show_flash("Shop")
     st.caption("Simulated store. Fictional brands. No real payment is taken.")
     if not owner.pets:
-        st.info("Add a pet in the sidebar to start shopping.")
+        st.info("No pets yet. Add your first companion in the sidebar to find food they'll love.")
     else:
         pet = _pick_pet("Shopping for", key="shop_pet")
         market = Marketplace(SAMPLE_CATALOG)
@@ -1272,19 +1454,38 @@ with shop_tab:
         # --- Recommendations ------------------------------------------------
         st.subheader(f"Recommended for {pet.name}", anchor=False)
         if safe:
-            _list(
-                [
-                    _row(
-                        "food",
-                        f"{rank}. {product.brand} · {product.name}",
-                        " · ".join(market.explain_recommendation(product, pet)),
-                        f"${product.price:.2f} · score {market.score(product, pet):g}",
-                        status=("ok", "safe"),
-                    )
-                    for rank, product in enumerate(safe[:3], start=1)
-                ],
-                f"Top food picks for {pet.name}",
-            )
+            with st.container(key="pp-alist-rec"):
+                for rank, product in enumerate(safe[:3], start=1):
+                    with st.container(key=f"pp-rec-{rank}", gap=None):
+                        with st.container(
+                            horizontal=True, vertical_alignment="center", wrap=False, gap=None,
+                            key=f"pp-arow-rec-{rank}",
+                        ):
+                            st.html(
+                                _row(
+                                    "food",
+                                    f"{rank}. {product.brand} · {product.name}",
+                                    meta=f"Score {market.score(product, pet):.2f}",
+                                    status=("ok", "safe"),
+                                )
+                            )
+                            if st.button(
+                                "Add",
+                                key=f"rec_add::{pet.name}::{product.product_id}",
+                                icon=":material/add_shopping_cart:",
+                                help=f"Add one {product.name} to your cart.",
+                            ):
+                                try:
+                                    owner.cart.add_item(product, 1)
+                                except ValueError as exc:
+                                    st.error(str(exc))
+                                else:
+                                    _flash(f"Added 1 × {product.name} to your cart.", "Shop")
+                        st.html(_fact_pills(product, pet))
+                        with st.expander("How this was scored"):
+                            lines = market.explain_recommendation(product, pet)
+                            items = "".join(f"<li>{_e(line)}</li>" for line in lines)
+                            st.html(f'<ul class="pp-scored">{items}</ul>')
         else:
             st.info(f"This store has no food that is safe for {pet.name}.")
 
@@ -1321,7 +1522,7 @@ with shop_tab:
                                 f"Rating {p.rating} · "
                                 + (f"safe for {pet.name}" if p.product_id in safe_ids
                                    else f"not safe for {pet.name}"),
-                                f"${p.price:.2f}",
+                                f"${p.price:,.2f}",
                                 status=("ok", "safe") if p.product_id in safe_ids
                                 else ("warn", "not safe"),
                             )
@@ -1347,7 +1548,7 @@ with shop_tab:
                         {
                             "Product": f"{row['brand']} · {row['name']}",
                             "Life stage": row["life_stage"],
-                            "Price ($)": f"{row['price']:.2f}",
+                            "Price ($)": f"{row['price']:,.2f}",
                             "Rating": row["rating"],
                             "kcal/cup": row["kcal_per_cup"],
                             "Supports": ", ".join(row["supports"]) or "–",
@@ -1401,8 +1602,8 @@ with shop_tab:
                             _row(
                                 "food",
                                 f"{product.brand} · {product.name}",
-                                f"{item.quantity} × ${product.price:.2f}",
-                                f"${item.subtotal():.2f}",
+                                f"{item.quantity:,} × ${product.price:,.2f}",
+                                f"${item.subtotal():,.2f}",
                                 chevron=False,
                             )
                         )
@@ -1438,7 +1639,7 @@ with shop_tab:
                         "Shop",
                     )
         else:
-            _empty("Your cart is empty.")
+            _empty("Your cart is empty for now.")
 
         # --- Orders ---------------------------------------------------------
         st.subheader("Orders", anchor=False)
@@ -1456,7 +1657,7 @@ with shop_tab:
                                 f"{order.order_id} · {_plural(sum(i.quantity for i in order.items), 'item')}",
                                 f"Placed {_day_label(order.placed_on)} · delivery "
                                 f"{_day_label(order.delivery_date)} · {order.status.value}",
-                                f"${order.total:.2f}",
+                                f"${order.total:,.2f}",
                                 status=("ok", "delivered") if delivered else ("", order.status.value),
                             )
                         )

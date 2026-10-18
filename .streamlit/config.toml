@@ -1,34 +1,46 @@
-# PawPal+ theme: quiet dark surfaces, one light accent, color only for meaning.
+# PawPal+ theme: "golden hour at home". Warm cream, cocoa ink, coral heart.
+# Every text color here passes WCAG AA on the cream page, white cards, and its own fill.
 [theme]
-base = "dark"
-backgroundColor = "#0B0C0E"
-secondaryBackgroundColor = "#15171A"
-textColor = "#F2F3F5"
-borderColor = "#24272B"
-# Primary buttons are light with dark text (text color set in app.py's style block).
-primaryColor = "#F2F3F5"
-linkColor = "#F2F3F5"
+base = "light"
+backgroundColor = "#FBF6EF"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#2E2522"
+borderColor = "#EDE3D8"
+# Deep coral carries Streamlit's white button labels at 4.5:1.
+primaryColor = "#C2553D"
+linkColor = "#B4513A"
 linkUnderline = false
 showWidgetBorder = true
 showSidebarBorder = true
-baseRadius = "12px"
-buttonRadius = "12px"
+baseRadius = "16px"
+buttonRadius = "full"
 
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+font = "'Nunito Sans':https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
 baseFontSize = 15
 baseFontWeight = 400
-headingFontSizes = ["36px", "20px", "16px", "15px", "14px", "13px"]
-headingFontWeights = [600, 600, 600, 500, 500, 500]
+headingFontSizes = ["36px", "22px", "17px", "15px", "14px", "13px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
 
-# Meaning colors: green = healthy / planned, amber = attention, red = error.
-greenColor = "#34D399"
-yellowColor = "#F5B841"
-orangeColor = "#F5B841"
-redColor = "#F87171"
-grayColor = "#8B9096"
-blueColor = "#8B9096"
+# Meaning: sage = healthy / planned, honey = attention, brick = error, cocoa = neutral info.
+greenColor = "#356B4E"
+greenTextColor = "#356B4E"
+greenBackgroundColor = "#DCEBDF"
+yellowColor = "#84540C"
+yellowTextColor = "#84540C"
+yellowBackgroundColor = "#F6E7C8"
+orangeColor = "#84540C"
+orangeTextColor = "#84540C"
+orangeBackgroundColor = "#F6E7C8"
+redColor = "#B23A2E"
+redTextColor = "#B23A2E"
+redBackgroundColor = "#F8E1DC"
+blueColor = "#6E5F56"
+blueTextColor = "#6E5F56"
+blueBackgroundColor = "#F3ECE4"
+grayColor = "#6E5F56"
 
 [theme.sidebar]
-backgroundColor = "#0F1013"
-secondaryBackgroundColor = "#15171A"
-borderColor = "#24272B"
+backgroundColor = "#F6EEE4"
+secondaryBackgroundColor = "#FFFFFF"
+borderColor = "#EDE3D8"
