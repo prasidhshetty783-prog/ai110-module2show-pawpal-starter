@@ -79,7 +79,6 @@ owner's time and hours, ranks by priority and preferences, and explains every ta
 planned or skipped (see **📐 Smarter Scheduling**).
 
 ## 🖥️ Sample Output
-```
 Excerpt from `python main.py` (sections 5–7):
 
 ```

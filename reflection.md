@@ -422,8 +422,9 @@ skipped every task. I fixed both and added tests for them.
 
 **b. Confidence**
 
-★★★★☆ (4/5). All 131 tests pass, and every scheduling, Health Tracker, and Marketplace, and save/load rule, including the edge cases right at its boundaries. One star off because
-the Streamlit UI is only checked by hand.
+★★★★☆ (4/5). All 131 tests pass, and every scheduling, Health Tracker, Marketplace, and
+save/load rule is tested, including the edge cases right at its boundaries. One star off
+because the Streamlit UI is only checked by hand.
 
 **Edge cases I'd test next:**
 
