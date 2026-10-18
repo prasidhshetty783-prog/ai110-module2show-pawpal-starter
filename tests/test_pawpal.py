@@ -1,8 +1,10 @@
 """Tests for the PawPal+ logic layer."""
 
+import json
 import re
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import NamedTuple
 
 import pytest
@@ -1308,3 +1310,155 @@ def test_to_delivery_task_is_a_one_time_delivery_on_the_delivery_date() -> None:
     assert task.due_date == DAY + timedelta(days=3)
     assert task.frequency is Frequency.ONCE
     assert task.pet_name == "Mochi"
+
+
+# --- Save and load ---
+
+def task_fields(task: Task) -> tuple:
+    """Every saved field of a task, for comparing an original with its loaded copy."""
+    return (task.pet_name, task.description, task.time, task.due_date, task.task_type,
+            task.frequency, task.priority, task.duration_minutes, task.completed)
+
+
+def save_and_load(owner: Owner, tmp_path: Path) -> Owner:
+    """Save an owner to a temp file and load it back."""
+    path = tmp_path / "data.json"
+    owner.save_to_json(str(path))
+    return Owner.load_from_json(str(path))
+
+
+def test_round_trip_keeps_pets_tasks_preferences_and_constraints(tmp_path: Path) -> None:
+    """Pets, every task field (enums, dates, completed), and owner settings survive a reload."""
+    owner = Owner("Jordan", email="jordan@example.com", address="12 Elm Street",
+                  available_minutes=90, day_start="06:30", day_end="22:00",
+                  preferred_types=[TaskType.WALK, TaskType.GROOMING])
+    mochi = Pet("Mochi", "dog", "Shiba Inu", age_years=3, weight_kg=10.5)
+    luna = Pet("Luna", "cat", "Tabby", age_years=0.5, weight_kg=4.2)
+    owner.add_pet(mochi)
+    owner.add_pet(luna)
+    mochi.add_task(make_task("Morning walk", "07:30", priority=Priority.HIGH, duration=30,
+                             frequency=Frequency.DAILY))
+    mochi.add_task(make_task("Brush coat", "18:00", task_type=TaskType.GROOMING,
+                             priority=Priority.LOW, frequency=Frequency.WEEKLY, completed=True))
+    luna.add_task(make_task("Vet visit", "10:00", day=DAY + timedelta(days=2),
+                            task_type=TaskType.APPOINTMENT, duration=60))
+
+    loaded = save_and_load(owner, tmp_path)
+
+    assert (loaded.name, loaded.email, loaded.address) == (
+        "Jordan", "jordan@example.com", "12 Elm Street")
+    assert (loaded.available_minutes, loaded.day_start, loaded.day_end) == (90, "06:30", "22:00")
+    assert loaded.preferred_types == [TaskType.WALK, TaskType.GROOMING]
+    assert [(p.name, p.species, p.breed, p.age_years, p.weight_kg) for p in loaded.pets] == [
+        ("Mochi", "dog", "Shiba Inu", 3, 10.5), ("Luna", "cat", "Tabby", 0.5, 4.2)]
+    # Enum members never equal their text, and date never equals str, so this also
+    # checks that enums and dates come back as real Enum and date objects.
+    assert [task_fields(t) for t in loaded.get_all_tasks()] == [
+        task_fields(t) for t in owner.get_all_tasks()]
+
+    saved_walk = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))[
+        "pets"][0]["tasks"][0]
+    assert (saved_walk["priority"], saved_walk["frequency"], saved_walk["due_date"]) == (
+        "high", "daily", "2026-10-15")
+
+
+def test_round_trip_keeps_health_data_without_duplicate_reminders(
+    home: Home, tmp_path: Path
+) -> None:
+    """Readings, medications, symptoms, and collar survive; reminder tasks are not doubled."""
+    mochi = home.mochi
+    mochi.health.conditions.append("joint health")
+    mochi.health.allergies.append("chicken")
+    mochi.add_medication(Medication(name="Carprofen", dose="25 mg", times=["08:00", "20:00"],
+                                    start_date=DAY))
+    mochi.health.log_symptom(SymptomEntry(DAY, "Limping on left leg", Severity.MILD))
+    mochi.pair_collar(SmartCollar("COL-1", seed=42))
+    for hour in (8, 12, 18):
+        mochi.sync_collar(datetime(2026, 10, 15, hour, 0))
+
+    loaded = save_and_load(home.owner, tmp_path).get_pet("Mochi")
+
+    assert loaded is not None
+    assert loaded.health.conditions == ["joint health"]
+    assert loaded.health.allergies == ["chicken"]
+    assert loaded.health.medications == mochi.health.medications
+    assert loaded.health.symptoms == mochi.health.symptoms
+    assert loaded.health.readings == mochi.health.readings
+    assert len(loaded.health.readings) == 3
+    assert [task_fields(t) for t in loaded.tasks] == [task_fields(t) for t in mochi.tasks]
+    assert len([t for t in loaded.tasks if t.task_type is TaskType.MEDICATION]) == 2
+    collar = loaded.collar
+    assert collar is not None
+    assert (collar.device_id, collar.seed, collar.species, collar.battery_percent,
+            collar.is_paired) == ("COL-1", 42, "dog", 97, True)
+
+
+def test_loaded_collar_restarts_from_its_seed(home: Home, tmp_path: Path) -> None:
+    """After a load, the collar's next reading matches a brand-new collar with the same seed."""
+    home.mochi.pair_collar(SmartCollar("COL-1", seed=42))
+    home.mochi.sync_collar(datetime(2026, 10, 15, 8, 0))
+
+    loaded = save_and_load(home.owner, tmp_path).get_pet("Mochi")
+
+    assert loaded is not None and loaded.collar is not None
+    at = datetime(2026, 10, 15, 9, 0)
+    assert loaded.collar.read_vitals(at) == SmartCollar("COL-2", seed=42).read_vitals(at)
+
+
+def test_round_trip_keeps_cart_and_orders_and_continues_order_ids(
+    home: Home, tmp_path: Path
+) -> None:
+    """Cart items, orders, status, and dates survive; the next checkout is ORD-0002."""
+    owner = home.owner
+    owner.address = "12 Elm Street"
+    owner.cart.add_item(make_product("P1", price=25.0, supports=("digestion",),
+                                     allergens=("chicken",)), 2)
+    first = owner.cart.checkout(owner, MockPayment(), "Mochi", DAY)
+    first.advance_status()
+    owner.cart.add_item(make_product("P2", price=10.0), 3)
+
+    loaded = save_and_load(owner, tmp_path)
+
+    assert [(i.product, i.quantity) for i in loaded.cart.items] == [
+        (make_product("P2", price=10.0), 3)]
+    [order] = loaded.orders
+    assert order == first
+    assert order.status is OrderStatus.SHIPPED
+    assert (order.placed_on, order.delivery_date) == (DAY, DAY + timedelta(days=3))
+    assert [(i.product.product_id, i.quantity) for i in order.items] == [("P1", 2)]
+
+    second = loaded.cart.checkout(loaded, MockPayment(), "Mochi", DAY + timedelta(days=1))
+    assert second.order_id == "ORD-0002"
+
+
+def test_load_from_missing_file_raises_file_not_found(tmp_path: Path) -> None:
+    """Loading a path that doesn't exist raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        Owner.load_from_json(str(tmp_path / "missing.json"))
+
+
+def test_loaded_owner_builds_the_same_daily_plan(home: Home, tmp_path: Path) -> None:
+    """The reloaded owner's plan, skipped tasks, and explanations match the original's."""
+    home.owner.preferred_types = [TaskType.ENRICHMENT]
+    home.mochi.add_medication(Medication(name="Carprofen", dose="25 mg", times=["06:00"],
+                                         start_date=DAY))
+    home.mochi.add_task(make_task("Long walk", "07:30", priority=Priority.HIGH, duration=60))
+    home.mochi.add_task(make_task("Puzzle toy", "11:00", task_type=TaskType.ENRICHMENT,
+                                  duration=50))
+    home.mochi.add_task(make_task("Brush coat", "15:00", task_type=TaskType.GROOMING,
+                                  priority=Priority.LOW, duration=45))
+    home.mochi.add_task(make_task("Late walk", "20:50", duration=30))
+    home.luna.add_task(make_task("Breakfast", "08:00", task_type=TaskType.FEEDING,
+                                 priority=Priority.HIGH, duration=10))
+    home.luna.add_task(make_task("Done already", "09:00", completed=True))
+
+    loaded = Scheduler(save_and_load(home.owner, tmp_path))
+
+    def keys(tasks: list[Task]) -> list[tuple[str, str, str]]:
+        """Identify tasks across the two owners by pet, description, and time."""
+        return [(t.pet_name, t.description, t.time) for t in tasks]
+
+    assert home.scheduler.skipped_tasks(DAY)  # the plan really had to leave something out
+    assert keys(loaded.build_daily_plan(DAY)) == keys(home.scheduler.build_daily_plan(DAY))
+    assert keys(loaded.skipped_tasks(DAY)) == keys(home.scheduler.skipped_tasks(DAY))
+    assert loaded.explain_plan(DAY) == home.scheduler.explain_plan(DAY)

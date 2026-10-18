@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time as dt_time
+from pathlib import Path
 
 import streamlit as st
 
@@ -22,9 +23,19 @@ UI_TASK_TYPES = [
 PRIORITIES = [p.value for p in Priority]
 FREQUENCIES = [f.value for f in Frequency]
 SPECIES = ["dog", "cat", "other"]
+DATA_FILE = "data.json"
 
 if "owner" not in st.session_state:
-    st.session_state["owner"] = Owner(name="Jordan")
+    loaded_owner = None
+    if Path(DATA_FILE).exists():
+        try:
+            loaded_owner = Owner.load_from_json(DATA_FILE)
+        except (ValueError, KeyError, TypeError) as exc:  # corrupt or hand-edited file
+            st.session_state["_flash"] = (
+                "warning",
+                f"Couldn't load {DATA_FILE} ({exc}). Starting fresh; saving will overwrite it.",
+            )
+    st.session_state["owner"] = loaded_owner or Owner(name="Jordan")
 owner: Owner = st.session_state["owner"]
 today = date.today()
 
@@ -169,6 +180,20 @@ with st.sidebar:
                 st.error(f"You already have a pet named {clean_name}. Pick a different name.")
             else:
                 _flash(f"Added {clean_name}.")
+
+    st.divider()
+    if st.button("Save", type="primary", icon=":material/save:", width="stretch"):
+        # The sidebar allows end <= start (with a warning), but Owner would reject
+        # that window on the next load, so don't write a file that can't be read back.
+        if owner.day_end <= owner.day_start:
+            st.error("Set your day end after your day start before saving.")
+        else:
+            try:
+                owner.save_to_json(DATA_FILE)
+            except OSError as exc:
+                st.error(f"Couldn't save {DATA_FILE}: {exc}")
+            else:
+                st.success(f"Saved to {DATA_FILE}.")
 
 
 # ---------------------------------------------------------------------------

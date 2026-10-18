@@ -349,7 +349,7 @@ I used Claude in two roles:
 
 **a. What you tested**
 
-124 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
+130 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
 (October 15, 2026), so the results never depend on what day I run them.
 
 - **Validation:** times like "9:00", "24:00", and "07:60" are rejected; owner hours must
@@ -392,6 +392,12 @@ I used Claude in two roles:
   with delivery 3 days out, adds the delivery task, and clears the cart; the order keeps
   its items after the cart is cleared; a second checkout gets ORD-0002; status goes
   placed → shipped → delivered, then stops.
+- **Save and load:** a full save-then-load round trip gives back the same pets, tasks,
+  enum values, dates, completed flags, and owner limits; health data and collars come
+  back intact without duplicating medication reminders; carts and orders come back, and
+  the next checkout continues the order numbers; loading a missing file raises an error;
+  the loaded owner's daily plan matches the original. Tests write to a temporary folder,
+  never the real data.json.
 
 **Why these tests matter:** they guard the mistakes that would look fine on screen but
 quietly let the owner down: a skipped medication, a plan over the owner's time, a LOW
@@ -402,7 +408,7 @@ skipped every task. I fixed both and added tests for them.
 
 **b. Confidence**
 
-★★★★☆ (4/5). All 124 tests pass, and every scheduling, Health Tracker, and Marketplace
+★★★★☆ (4/5). All 130 tests pass, and every scheduling, Health Tracker, and Marketplace
 rule is tested, including the edge cases right at its boundaries. One star off because
 the Streamlit UI is only checked by hand.
 

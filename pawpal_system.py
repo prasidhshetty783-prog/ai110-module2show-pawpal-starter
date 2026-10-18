@@ -1,11 +1,12 @@
 """PawPal+ logic layer: owners, pets, tasks, scheduling, health tracking, and a food marketplace.
 
-Built from diagrams/uml.mmd. Core scheduling, the health tracker, and the food
-marketplace are implemented; save and load are still stubs.
+Built from diagrams/uml.mmd. Core scheduling, the health tracker, the food
+marketplace, and JSON save and load are implemented.
 """
 
 from __future__ import annotations
 
+import json
 import random
 import re
 from dataclasses import dataclass, field, replace
@@ -577,12 +578,17 @@ class Owner:
 
     def save_to_json(self, path: str) -> None:
         """Save this owner and all their data to a JSON file."""
-        raise NotImplementedError
+        # Build the full text first: if anything can't be serialized, the old
+        # file is left untouched instead of being truncated halfway through.
+        text = json.dumps(_owner_to_dict(self), indent=2)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
 
     @classmethod
     def load_from_json(cls, path: str) -> Owner:
         """Load an owner and all their data from a JSON file."""
-        raise NotImplementedError
+        with open(path, encoding="utf-8") as f:
+            return _owner_from_dict(json.load(f))
 
 
 class Scheduler:
@@ -1060,3 +1066,287 @@ class Marketplace:
             }
             for p in (by_id[pid] for pid in product_ids if pid in by_id)
         ]
+
+
+# ---------------------------------------------------------------------------
+# Save and load (private helpers for Owner.save_to_json / Owner.load_from_json)
+# ---------------------------------------------------------------------------
+# Enums are stored as their values and dates/datetimes as ISO strings, so the
+# file is plain JSON. Every _from_dict rebuilds through the normal constructors,
+# so a hand-edited file goes through the same validation as user input.
+
+def _task_to_dict(task: Task) -> dict:
+    """Turn a Task into JSON-ready data (pet_name comes from the pet it is nested under)."""
+    return {
+        "description": task.description,
+        "time": task.time,
+        "due_date": task.due_date.isoformat(),
+        "task_type": task.task_type.value,
+        "frequency": task.frequency.value,
+        "priority": task.priority.value,
+        "duration_minutes": task.duration_minutes,
+        "completed": task.completed,
+    }
+
+
+def _task_from_dict(data: dict) -> Task:
+    """Rebuild a Task; Pet.add_task() sets its pet_name."""
+    return Task(
+        data["description"],
+        data["time"],
+        date.fromisoformat(data["due_date"]),
+        TaskType(data["task_type"]),
+        frequency=Frequency(data["frequency"]),
+        priority=Priority(data["priority"]),
+        duration_minutes=data["duration_minutes"],
+        completed=data["completed"],
+    )
+
+
+def _medication_to_dict(med: Medication) -> dict:
+    """Turn a Medication into JSON-ready data."""
+    return {
+        "name": med.name,
+        "dose": med.dose,
+        "times": list(med.times),
+        "frequency": med.frequency.value,
+        "start_date": med.start_date.isoformat(),
+    }
+
+
+def _medication_from_dict(data: dict) -> Medication:
+    """Rebuild a Medication (its reminder tasks are restored separately, as tasks)."""
+    return Medication(
+        name=data["name"],
+        dose=data["dose"],
+        times=data["times"],
+        frequency=Frequency(data["frequency"]),
+        start_date=date.fromisoformat(data["start_date"]),
+    )
+
+
+def _symptom_to_dict(entry: SymptomEntry) -> dict:
+    """Turn a SymptomEntry into JSON-ready data."""
+    return {
+        "logged_on": entry.logged_on.isoformat(),
+        "description": entry.description,
+        "severity": entry.severity.value,
+    }
+
+
+def _symptom_from_dict(data: dict) -> SymptomEntry:
+    """Rebuild a SymptomEntry."""
+    return SymptomEntry(
+        logged_on=date.fromisoformat(data["logged_on"]),
+        description=data["description"],
+        severity=Severity(data["severity"]),
+    )
+
+
+def _reading_to_dict(reading: HealthReading) -> dict:
+    """Turn a HealthReading into JSON-ready data."""
+    return {
+        "timestamp": reading.timestamp.isoformat(),
+        "heart_rate_bpm": reading.heart_rate_bpm,
+        "spo2_percent": reading.spo2_percent,
+        "temperature_c": reading.temperature_c,
+        "respiratory_rate": reading.respiratory_rate,
+        "sleep_score": reading.sleep_score,
+        "steps": reading.steps,
+        "distance_km": reading.distance_km,
+        "calories_burned": reading.calories_burned,
+    }
+
+
+def _reading_from_dict(data: dict) -> HealthReading:
+    """Rebuild a HealthReading."""
+    return HealthReading(
+        timestamp=datetime.fromisoformat(data["timestamp"]),
+        heart_rate_bpm=data["heart_rate_bpm"],
+        spo2_percent=data["spo2_percent"],
+        temperature_c=data["temperature_c"],
+        respiratory_rate=data["respiratory_rate"],
+        sleep_score=data["sleep_score"],
+        steps=data["steps"],
+        distance_km=data["distance_km"],
+        calories_burned=data["calories_burned"],
+    )
+
+
+def _health_to_dict(health: HealthProfile) -> dict:
+    """Turn a HealthProfile into JSON-ready data."""
+    return {
+        "conditions": list(health.conditions),
+        "allergies": list(health.allergies),
+        "medications": [_medication_to_dict(m) for m in health.medications],
+        "symptoms": [_symptom_to_dict(s) for s in health.symptoms],
+        "readings": [_reading_to_dict(r) for r in health.readings],
+    }
+
+
+def _health_from_dict(data: dict) -> HealthProfile:
+    """Rebuild a HealthProfile, restoring medications directly (no duplicate reminder tasks)."""
+    return HealthProfile(
+        conditions=data["conditions"],
+        allergies=data["allergies"],
+        medications=[_medication_from_dict(m) for m in data["medications"]],
+        symptoms=[_symptom_from_dict(s) for s in data["symptoms"]],
+        readings=[_reading_from_dict(r) for r in data["readings"]],
+    )
+
+
+def _collar_to_dict(collar: SmartCollar) -> dict:
+    """Turn a SmartCollar's settings into JSON-ready data (its RNG state is not saved)."""
+    return {
+        "device_id": collar.device_id,
+        "seed": collar.seed,
+        "species": collar.species,
+        "battery_percent": collar.battery_percent,
+        "is_paired": collar.is_paired,
+    }
+
+
+def _collar_from_dict(data: dict) -> SmartCollar:
+    """Rebuild a SmartCollar; its random generator restarts from the seed."""
+    return SmartCollar(
+        data["device_id"],
+        data["seed"],
+        species=data["species"],
+        battery_percent=data["battery_percent"],
+        is_paired=data["is_paired"],
+    )
+
+
+def _pet_to_dict(pet: Pet) -> dict:
+    """Turn a Pet, its tasks, health profile, and collar into JSON-ready data."""
+    return {
+        "name": pet.name,
+        "species": pet.species,
+        "breed": pet.breed,
+        "age_years": pet.age_years,
+        "weight_kg": pet.weight_kg,
+        "tasks": [_task_to_dict(t) for t in pet.tasks],
+        "health": _health_to_dict(pet.health),
+        "collar": None if pet.collar is None else _collar_to_dict(pet.collar),
+    }
+
+
+def _pet_from_dict(data: dict) -> Pet:
+    """Rebuild a Pet with its tasks, health profile, and collar."""
+    pet = Pet(
+        data["name"],
+        data["species"],
+        data["breed"],
+        data["age_years"],
+        data["weight_kg"],
+        health=_health_from_dict(data["health"]),
+    )
+    for task_data in data["tasks"]:
+        pet.add_task(_task_from_dict(task_data))  # sets pet_name, rejects duplicates
+    if data["collar"] is not None:
+        # Attached directly: pair_collar() would refuse a collar saved as is_paired=True.
+        pet.collar = _collar_from_dict(data["collar"])
+    return pet
+
+
+def _product_to_dict(product: FoodProduct) -> dict:
+    """Turn a FoodProduct into JSON-ready data."""
+    return {
+        "product_id": product.product_id,
+        "brand": product.brand,
+        "name": product.name,
+        "species": product.species,
+        "life_stage": product.life_stage,
+        "price": product.price,
+        "rating": product.rating,
+        "kcal_per_cup": product.kcal_per_cup,
+        "supports": list(product.supports),
+        "allergens": list(product.allergens),
+    }
+
+
+def _product_from_dict(data: dict) -> FoodProduct:
+    """Rebuild a FoodProduct."""
+    return FoodProduct(
+        data["product_id"],
+        data["brand"],
+        data["name"],
+        data["species"],
+        data["life_stage"],
+        data["price"],
+        data["rating"],
+        data["kcal_per_cup"],
+        supports=data["supports"],
+        allergens=data["allergens"],
+    )
+
+
+def _cart_item_to_dict(item: CartItem) -> dict:
+    """Turn a CartItem into JSON-ready data."""
+    return {"product": _product_to_dict(item.product), "quantity": item.quantity}
+
+
+def _cart_item_from_dict(data: dict) -> CartItem:
+    """Rebuild a CartItem."""
+    return CartItem(_product_from_dict(data["product"]), data["quantity"])
+
+
+def _order_to_dict(order: Order) -> dict:
+    """Turn an Order into JSON-ready data."""
+    return {
+        "order_id": order.order_id,
+        "items": [_cart_item_to_dict(i) for i in order.items],
+        "total": order.total,
+        "status": order.status.value,
+        "placed_on": order.placed_on.isoformat(),
+        "delivery_date": order.delivery_date.isoformat(),
+        "delivery_address": order.delivery_address,
+    }
+
+
+def _order_from_dict(data: dict) -> Order:
+    """Rebuild an Order."""
+    return Order(
+        order_id=data["order_id"],
+        items=[_cart_item_from_dict(i) for i in data["items"]],
+        total=data["total"],
+        status=OrderStatus(data["status"]),
+        placed_on=date.fromisoformat(data["placed_on"]),
+        delivery_date=date.fromisoformat(data["delivery_date"]),
+        delivery_address=data["delivery_address"],
+    )
+
+
+def _owner_to_dict(owner: Owner) -> dict:
+    """Turn an Owner and everything they own into JSON-ready data."""
+    return {
+        "name": owner.name,
+        "email": owner.email,
+        "address": owner.address,
+        "available_minutes": owner.available_minutes,
+        "day_start": owner.day_start,
+        "day_end": owner.day_end,
+        "preferred_types": [t.value for t in owner.preferred_types],
+        "pets": [_pet_to_dict(p) for p in owner.pets],
+        "cart": [_cart_item_to_dict(i) for i in owner.cart.items],
+        "orders": [_order_to_dict(o) for o in owner.orders],
+    }
+
+
+def _owner_from_dict(data: dict) -> Owner:
+    """Rebuild an Owner with their pets, cart, and orders."""
+    owner = Owner(
+        data["name"],
+        email=data["email"],
+        address=data["address"],
+        available_minutes=data["available_minutes"],
+        day_start=data["day_start"],
+        day_end=data["day_end"],
+        preferred_types=[TaskType(v) for v in data["preferred_types"]],
+    )
+    for pet_data in data["pets"]:
+        owner.add_pet(_pet_from_dict(pet_data))  # rejects duplicate pet names
+    owner.cart.items = [_cart_item_from_dict(i) for i in data["cart"]]
+    # Orders are restored in full, so the next checkout's ID continues from len(orders).
+    owner.orders = [_order_from_dict(o) for o in data["orders"]]
+    return owner

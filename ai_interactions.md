@@ -37,8 +37,7 @@ demo, run), show me the plan before coding, and not commit.
    then showed recommendations with reasons, excluded foods, search, compare, cart,
    checkout, the delivery task, and order status.
 7. **Ran** `python -m pytest` (124 passed) and `python main.py`.
-8. [FILL IN from the agent's log: anything it fixed along the way, or "Nothing failed
-   along the way."]
+8. Nothing failed along the way; all tests passed on the first full run.
 
 **What did you have to verify or fix manually?**
 

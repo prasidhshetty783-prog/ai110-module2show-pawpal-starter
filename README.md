@@ -101,7 +101,7 @@ python -m pytest        # run the suite
 python -m pytest -v     # see each test by name
 ```
 
-**124 tests, all passing.** The suite covers validation (time format, owner hours and
+**130 tests, all passing.** The suite covers validation (time format, owner hours and
 time budget, duplicate pets and tasks, safe edits that leave the original unchanged),
 sorting and filtering across pets, conflict warnings (completed tasks ignored), daily
 and weekly recurrence (including month/year rollover and no duplicate copies), and every
@@ -119,11 +119,11 @@ one is marked complete; overnight hours (e.g. 22:00–06:00) aren't supported.
 Sample test output:
 ```
 platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
-collected 124 items
+collected 130 items
 
 tests\test_pawpal.py ........................................................ [100%]
 
-============================== 124 passed in 0.32s ==============================
+============================== 130 passed in 0.32s ==============================
 ```
 
 ## 📐 Smarter Scheduling
@@ -204,5 +204,18 @@ payment: `MockPayment` never asks for or stores card details.
 
 **Design decision:** recommendations are a third scheduling-style algorithm (filter, then
 rank, then explain), built in agent mode. See `ai_interactions.md`.
+
+## 💾 Save and load
+
+Click **Save** in the sidebar to write everything to `data.json`; the app loads it on the
+next start. It saves the owner's info and limits, pets, tasks (done and pending), health
+data (readings, medications, symptoms, collars), the cart, and orders. Uses Python's
+built-in `json` only: enums are saved as their text values, dates as ISO strings.
+
+- `data.json` is in `.gitignore`, so personal data never goes to GitHub.
+- After a load, order IDs continue (the next order isn't a second ORD-0001), and
+  medication reminders aren't duplicated.
+- **Known limitation:** a loaded collar's random generator restarts from its seed, so the
+  readings after a load repeat the sequence from the start.
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
