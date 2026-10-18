@@ -1,46 +1,60 @@
-# PawPal+ (Module 2 Project)
+# 🐾 PawPal+
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+A pet care planner for busy owners. PawPal+ keeps every pet's care tasks in one place,
+builds a daily plan that fits the owner's time and waking hours, and explains every
+choice in plain English. It also tracks each pet's health with a simulated smart collar
+and recommends safe food from a simulated store.
 
-## Scenario
+Built for CodePath AI110 (Module 2) with Python, Streamlit, and pytest.
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+## ✨ Features
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+**Daily planning**
+- Add, edit, remove, and mark tasks done (walks, feeding, medication, enrichment,
+  grooming, appointments, deliveries), each with a time, duration, priority, and repeat.
+- A daily plan that respects the owner's available minutes and waking hours, ranks by
+  priority and preferred task types, and keeps trying smaller tasks after one doesn't fit.
+- Medication is always kept, even outside the owner's hours or over budget.
+- A plain-English reason for every task planned or left for later.
+- Sorting by time or priority, filtering by pet or done status, and conflict warnings.
+- Daily and weekly tasks roll over to their next date when marked done.
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+**🩺 Health Tracker (simulated)**
+- A smart collar per pet: heart rate, SpO2, temperature, breathing, sleep, steps,
+  distance, and calories, with a daily summary.
+- Species-aware alerts for dogs and cats, always shown with a vet disclaimer.
+- Medications that add their own reminders to the schedule, plus a symptom log.
 
-## What you will build
+**🛒 Food Marketplace (simulated)**
+- Recommendations that never include the wrong species or the pet's allergens, ranked
+  by health conditions, life stage, rating, and price, with the reason for each.
+- Search, compare (including calories), cart, mock checkout (no card details, ever),
+  and a delivery task added to the pet's schedule.
 
-Your final app should:
+**Everything else**
+- Save and load all data to `data.json`.
+- A warm, accessible UI with animated pet cards (each species has its own hover move;
+  reduced-motion is respected), plus formatted CLI output using `tabulate` and emoji.
+- 131 automated tests.
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
-
-## Getting started
-
-### Setup
+## 🚀 Getting started
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.venv\Scripts\Activate.ps1      # Windows PowerShell (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
+
+streamlit run app.py            # the app
+python main.py                  # the CLI demo
+python -m pytest                # the tests
 ```
 
-### Suggested workflow
+## 🗺️ Design
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+The full class diagram (20 classes and enums in three groups: core scheduling, health
+tracker, and food marketplace) is in [`diagrams/uml.mmd`](diagrams/uml.mmd). Paste it
+into [mermaid.live](https://mermaid.live) to view it. It matches `pawpal_system.py`
+exactly; every public method in the code is in the diagram.
 
 ## 🧩 How PawPal+ works
 
@@ -66,32 +80,46 @@ planned or skipped (see **📐 Smarter Scheduling**).
 
 ## 🖥️ Sample Output
 ```
-PawPal+ for Jordan (Mochi, Luna) - Friday, October 16, 2026
-Available: 90 min | Hours: 07:00-21:00 | Prefers: walk
+Excerpt from `python main.py` (sections 5–7):
 
-5. Today's plan
-===============
-Time   Pet    Task              Type        Duration  Priority
------  -----  ----------------  ----------  --------  --------
-07:30  Mochi  Morning walk      walk          30 min  HIGH
-07:30  Luna   Breakfast         feeding        5 min  HIGH
-08:00  Luna   Thyroid pill      medication     5 min  HIGH
-12:00  Mochi  Brush coat        grooming      10 min  MEDIUM
-18:00  Mochi  Evening walk      walk          30 min  HIGH
-19:30  Luna   Feather toy play  enrichment    10 min  LOW
------  -----  ----------------  ----------  --------  --------
+```
+✅ 5. Today's plan
+==================
+╭────────┬───────┬───────────────────────┬────────────┬────────────┬────────────╮
+│ Time   │ Pet   │ Task                  │ Type       │   Duration │ Priority   │
+├────────┼───────┼───────────────────────┼────────────┼────────────┼────────────┤
+│ 07:30  │ Mochi │ Morning walk          │ walk       │     30 min │ HIGH       │
+│ 07:30  │ Luna  │ Breakfast             │ feeding    │      5 min │ HIGH       │
+│ 08:00  │ Luna  │ Thyroid pill (2.5 mg) │ medication │      5 min │ HIGH       │
+│ 12:00  │ Mochi │ Brush coat            │ grooming   │     10 min │ MEDIUM     │
+│ 18:00  │ Mochi │ Evening walk          │ walk       │     30 min │ HIGH       │
+│ 19:30  │ Luna  │ Feather toy play      │ enrichment │     10 min │ LOW        │
+╰────────┴───────┴───────────────────────┴────────────┴────────────┴────────────╯
 6 tasks, 90 min total
-Minutes used: 90 of 90 available
+✅ Minutes used: 90 of 90 available
 
-6. Skipped tasks
-================
-Time   Pet    Task           Type        Duration  Priority
------  -----  -------------  ----------  --------  --------
-13:00  Mochi  Puzzle feeder  enrichment    20 min  MEDIUM
-16:00  Mochi  Bath           grooming      40 min  MEDIUM
-20:45  Luna   Nail trim      grooming      20 min  LOW
------  -----  -------------  ----------  --------  --------
+⏳ 6. Skipped tasks (these can wait)
+====================================
+╭────────┬───────┬───────────────┬────────────┬────────────┬────────────╮
+│ Time   │ Pet   │ Task          │ Type       │   Duration │ Priority   │
+├────────┼───────┼───────────────┼────────────┼────────────┼────────────┤
+│ 13:00  │ Mochi │ Puzzle feeder │ enrichment │     20 min │ MEDIUM     │
+│ 16:00  │ Mochi │ Bath          │ grooming   │     40 min │ MEDIUM     │
+│ 20:45  │ Luna  │ Nail trim     │ grooming   │     20 min │ LOW        │
+╰────────┴───────┴───────────────┴────────────┴────────────┴────────────╯
 3 tasks, 80 min total
+
+🐾 7. Why each task was planned or skipped
+==========================================
+✅ 07:30 Morning walk (Mochi, 30 min): planned. High priority, you prefer walks.
+✅ 07:30 Breakfast (Luna, 5 min): planned. High priority.
+💊 08:00 Thyroid pill (2.5 mg) (Luna, 5 min): planned. Medication, always kept (health first).
+✅ 12:00 Brush coat (Mochi, 10 min): planned. Medium priority.
+⏳ 13:00 Puzzle feeder (Mochi, 20 min): skipped. Not enough time left (needs 20 min, 10 min left).
+⏳ 16:00 Bath (Mochi, 40 min): skipped. Not enough time left (needs 40 min, 10 min left).
+✅ 18:00 Evening walk (Mochi, 30 min): planned. High priority, you prefer walks.
+✅ 19:30 Feather toy play (Luna, 10 min): planned. Low priority.
+⏳ 20:45 Nail trim (Luna, 20 min): skipped. Would run past your hours (ends 21:05).
 ```
 
 ## 🧪 Testing PawPal+
@@ -101,7 +129,7 @@ python -m pytest        # run the suite
 python -m pytest -v     # see each test by name
 ```
 
-**130 tests, all passing.** The suite covers validation (time format, owner hours and
+**131 tests, all passing.** The suite covers validation (time format, owner hours and
 time budget, duplicate pets and tasks, safe edits that leave the original unchanged),
 sorting and filtering across pets, conflict warnings (completed tasks ignored), daily
 and weekly recurrence (including month/year rollover and no duplicate copies), and every
@@ -119,11 +147,11 @@ one is marked complete; overnight hours (e.g. 22:00–06:00) aren't supported.
 Sample test output:
 ```
 platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
-collected 130 items
+collected 131 items
 
 tests\test_pawpal.py ........................................................ [100%]
 
-============================== 130 passed in 0.32s ==============================
+============================== 131 passed in 0.32s ==============================
 ```
 
 ## 📐 Smarter Scheduling
@@ -147,7 +175,7 @@ Time   Pet    Task              Type        Duration  Priority
 07:30  Mochi  Morning walk      walk          30 min  HIGH
 18:00  Mochi  Evening walk      walk          30 min  HIGH
 07:30  Luna   Breakfast         feeding        5 min  HIGH
-08:00  Luna   Thyroid pill      medication     5 min  HIGH
+08:00  Luna   Thyroid pill (2.5 mg)  medication     5 min  HIGH
 12:00  Mochi  Brush coat        grooming      10 min  MEDIUM
 13:00  Mochi  Puzzle feeder     enrichment    20 min  MEDIUM
 16:00  Mochi  Bath              grooming      40 min  MEDIUM
@@ -160,7 +188,7 @@ Time   Pet    Task              Type        Duration  Priority
 ```
 - 07:30 Morning walk (Mochi, 30 min): planned. High priority, you prefer walks.
 - 07:30 Breakfast (Luna, 5 min): planned. High priority.
-- 08:00 Thyroid pill (Luna, 5 min): planned. Medication, always kept (health first).
+- 08:00 Thyroid pill (2.5 mg) (Luna, 5 min): planned. Medication, always kept (health first).
 - 12:00 Brush coat (Mochi, 10 min): planned. Medium priority.
 - 13:00 Puzzle feeder (Mochi, 20 min): skipped. Not enough time left (needs 20 min, 10 min left).
 - 16:00 Bath (Mochi, 40 min): skipped. Not enough time left (needs 40 min, 10 min left).
@@ -218,4 +246,20 @@ built-in `json` only: enums are saved as their text values, dates as ISO strings
 - **Known limitation:** a loaded collar's random generator restarts from its seed, so the
   readings after a load repeat the sequence from the start.
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+## 🎬 Demo walkthrough
+
+1. **Add your pets** in the sidebar. Each one gets its own card; hover a card to see the
+   pet move (a dog wags and tilts its head, a cat swishes its tail).
+2. **Schedule tab:** add tasks. Today's plan updates right away, showing what fits in
+   your time, what can wait, and why. Conflicts show as warnings. Mark a daily task done
+   and tomorrow's copy appears.
+3. **Health tab:** pair a collar, press **Sync now** to take a reading, and see the daily
+   summary and alerts. Add a medication, and its reminders join the schedule.
+4. **Shop tab:** see safe food picks for a pet with the reasons for each, compare
+   products, add to the cart, and check out. A delivery task lands on the pet's schedule.
+5. Click **Save** in the sidebar. Restart the app, and everything is still there.
+
+![PawPal+ home](assets/home.png)
+![Today's plan](assets/schedule.png)
+![Health tab](assets/health.png)
+![Shop tab](assets/shop.png)

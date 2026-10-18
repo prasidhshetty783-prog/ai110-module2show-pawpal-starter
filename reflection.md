@@ -179,8 +179,13 @@ checking AI output against the requirements or against itself.
   because Mermaid has no classmethod symbol. A classmethod is the standard Python way to
   build an object from a file, so I kept it and added a comment in the diagram.
 
-- **Change 6:** [FILL IN after Phase 6: the differences between the final code and the
-  diagram, and what you updated.]
+- **Change 6: Two diagram changes during the build, then a final sync.** I added
+  `species` to `SmartCollar` after Claude pointed out that dog-range readings would set
+  off false alarms for every cat. I added `Scheduler.skip_reasons(day)` because the UI was
+  pulling skip reasons out of the explanation text, which would quietly break if that
+  text changed. For the final check, I compared every class and public method in
+  `pawpal_system.py` against `uml.mmd` (20 of 20 match) and rendered the diagram to make
+  sure it still draws.
 
 ---
 
@@ -255,7 +260,15 @@ I used Claude in two roles:
   rubric and helped me build a phase-by-phase plan where every step maps to rubric points. It drafted the detailed UML from my feature ideas (Health Tracker and Food Marketplace), rendered the diagram to check it was readable, and wrote `CLAUDE.md`, the rules file that Claude in VS Code reads at the start of every session. It also reviewed my design when I spotted missing requirements.
 - **Claude in VS Code, as my builder.** It generated `diagrams/uml.mmd` from my full
   brainstorm, adding 7 improvements I accepted. It wrote the class skeleton, built a script to compare the code against the UML, and reviewed the skeleton (22 findings).
-  In Phase 2 it implemented Task, Pet, Owner, and `Scheduler.get_todays_schedule()`, wrote `main.py` with an aligned schedule table, wrote the first two tests, and drafted the README summary. [ADD as you go: Phase 3 UI, Phase 4 algorithms, Phase 5 tests.]
+- In Phase 2 it implemented Task, Pet, Owner, and `Scheduler.get_todays_schedule()`, wrote `main.py` with an aligned schedule table, wrote the first two tests, and drafted the README summary.  
+- In Phase 3 it connected the Streamlit UI.
+- In Phase 4 it built sorting, filtering, recurrence, conflict detection, and the daily planner.
+- In Phase 5 it proposed a test plan that found two bugs before any test existed, then wrote the suite (now 131 tests).
+  It built the Health Tracker after flagging the cat false-alarm problem in my spec, built
+  the Food Marketplace in agent mode, and added save/load. 
+- In Phase 6 it split the app into tabs, redesigned the UI twice (a minimal dark version, then a warm "golden hour"
+  theme), measured real color contrast, and fixed 4 pairs in my palette that failed
+  WCAG AA.
 
 **What helped most:**
 
@@ -268,8 +281,9 @@ I used Claude in two roles:
   kept the code and the diagram matched.
 - Giving exact rules and example outputs, like the explain_plan sentences, instead of
   vague requests.
-- A separate session per phase. [FILL IN: one concrete way this helped, e.g., the
-  testing session wasn't confused by earlier algorithm discussions.]
+- A separate session per phase. For example, after `/clear`, the marketplace session planned only from CLAUDE.md and the
+ UML and confirmed the two agreed, instead of carrying over guesses from the Health
+ Tracker work.
 
 ---
 
@@ -349,7 +363,7 @@ I used Claude in two roles:
 
 **a. What you tested**
 
-130 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
+131 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
 (October 15, 2026), so the results never depend on what day I run them.
 
 - **Validation:** times like "9:00", "24:00", and "07:60" are rejected; owner hours must
@@ -408,8 +422,7 @@ skipped every task. I fixed both and added tests for them.
 
 **b. Confidence**
 
-★★★★☆ (4/5). All 130 tests pass, and every scheduling, Health Tracker, and Marketplace
-rule is tested, including the edge cases right at its boundaries. One star off because
+★★★★☆ (4/5). All 131 tests pass, and every scheduling, Health Tracker, and Marketplace, and save/load rule, including the edge cases right at its boundaries. One star off because
 the Streamlit UI is only checked by hand.
 
 **Edge cases I'd test next:**
@@ -428,26 +441,35 @@ the Streamlit UI is only checked by hand.
 
 **a. What went well**
 
-[FILL IN in Phase 6. Ask yourself: what part would you show in an interview? Likely
-candidates: the explainable daily plan (it tells the owner why something was skipped),
-the allergen-safe recommendations with reasons, or CLAUDE.md keeping the AI consistent
-across sessions.]
+The explainable daily plan. Most schedulers just show a list; PawPal+ tells the owner
+why each task was planned or left for later ("Not enough time left (needs 40 min, 10 min
+left)"). It's the part I'd show in an interview, because it puts the human-centered idea
+of explainable AI into code: one private `_plan()` function makes every decision, and the
+plan, the skipped list, and the explanations all read from it, so they can never
+disagree. The marketplace uses the same pattern, so a recommendation's reasons always
+add up to its score. A close second is honest status in the UI: a pet the app can't
+monitor says "Not monitored" instead of a false "healthy".
 
 **b. What you would improve**
 
-[FILL IN in Phase 6. Candidates based on the current design:
-
-- overlap-based conflict detection using durations
-- unique task IDs instead of matching by description
-- connecting a real wearable instead of simulated readings
-- a smarter planner that suggests moving a skipped task to a free time slot instead of
-  just dropping it
-- a real payment provider and real product data for the marketplace]
+- **Overlap-based conflicts:** today only the exact same start time is flagged; a
+  30-minute walk at 07:30 should also clash with a feeding at 07:45.
+- **Suggest, don't just skip:** when a task can't fit, offer the nearest free time slot.
+- **Task IDs:** tasks are matched by description and time, so a unique ID would make
+  edits safer.
+- **Life stage as a filter option:** an adult cat can still be shown a kitten food when
+  few safe foods are left.
+- **Usability testing:** run 5 owners through the add-task → plan → shop flow and
+  measure task success and SUS, instead of relying on my own review and screenshots.
+- **Real integrations:** a real wearable, a real product catalog, and a real payment
+  provider.
 
 **c. Key takeaway**
 
-[FILL IN in your words. One starting point that's already true: the AI was fast and
-thorough at building what I described, but it only covered what I asked for. When the
-design missed the README's constraints, the draft missed them too. Being the lead
-architect meant checking the spec against the real requirements, not just checking
-whether the code ran.]
+The AI was fast and thorough at building what I described, but it built exactly what I
+described. When my spec missed the README's constraints, the first draft missed them too.
+When my spec said "dog-range values", it would have set off false alarms for every cat
+until the AI flagged it. Being the lead architect meant owning the spec, checking it
+against the real requirements, and verifying claims myself (running the code, checking
+`git log`, reading the screenshots) rather than trusting "done". It also taught me that
+an instruction file states preferences while a tool permission enforces them.
