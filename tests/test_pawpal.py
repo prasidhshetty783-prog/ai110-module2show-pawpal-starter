@@ -1,5 +1,6 @@
 """Tests for the PawPal+ logic layer."""
 
+import re
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import NamedTuple
@@ -7,11 +8,19 @@ from typing import NamedTuple
 import pytest
 
 from pawpal_system import (
+    SAMPLE_CATALOG,
     VITAL_RANGES,
+    Cart,
+    CartItem,
+    FoodProduct,
     Frequency,
     HealthProfile,
     HealthReading,
+    Marketplace,
     Medication,
+    MockPayment,
+    Order,
+    OrderStatus,
     Owner,
     Pet,
     Priority,
@@ -933,3 +942,369 @@ def test_daily_summary_uses_that_day_only_and_latest_totals() -> None:
     assert summary["total_calories"] == 240
     assert summary["latest_sleep_score"] == 70
     assert summary["symptoms"] == 1
+
+
+# --- Food Marketplace: products and catalog ---
+
+# The "(+1.80)" points at the end of each explain_recommendation() line.
+POINTS = re.compile(r"\(([+-]\d+\.\d{2})\)$")
+
+
+def make_product(
+    product_id: str = "P1",
+    *,
+    species: str = "dog",
+    life_stage: str = "adult",
+    price: float = 40.0,
+    rating: float = 4.0,
+    supports: tuple[str, ...] = (),
+    allergens: tuple[str, ...] = (),
+    brand: str = "Test Brand",
+    name: str = "Test Food",
+) -> FoodProduct:
+    """Build a product with sensible defaults so each test states only what matters."""
+    return FoodProduct(product_id, brand, name, species, life_stage, price, rating, 350,
+                       supports=list(supports), allergens=list(allergens))
+
+
+def explained_points(lines: list[str]) -> list[float]:
+    """Pull the points out of each explain_recommendation() line."""
+    points = []
+    for line in lines:
+        match = POINTS.search(line)
+        assert match is not None, f"no points in {line!r}"
+        points.append(float(match.group(1)))
+    return points
+
+
+def test_sample_catalog_prices_are_positive_and_under_the_price_ceiling() -> None:
+    """The price score assumes every price is below $100."""
+    assert all(0 < p.price < 100 for p in SAMPLE_CATALOG)
+
+
+def test_sample_catalog_has_unique_ids_and_both_species() -> None:
+    """About 12 products, each with its own id, for dogs and cats."""
+    ids = [p.product_id for p in SAMPLE_CATALOG]
+    assert len(ids) == len(set(ids)) >= 10
+    assert {p.species for p in SAMPLE_CATALOG} == {"dog", "cat"}
+
+
+def test_food_product_stores_species_lowercase() -> None:
+    """'Dog' and 'dog' match, as with Pet.species."""
+    assert make_product(species="Dog").species == "dog"
+
+
+def test_food_product_rejects_unknown_life_stage() -> None:
+    """life_stage must be young, adult, senior, or all."""
+    with pytest.raises(ValueError):
+        make_product(life_stage="puppy")
+
+
+def test_food_product_keeps_its_own_copy_of_lists() -> None:
+    """Changing the list passed in does not change the product."""
+    supports = ["digestion"]
+    product = FoodProduct("P1", "B", "N", "dog", "adult", 10.0, 4.0, 300, supports=supports)
+    supports.append("joint health")
+    assert product.supports == ["digestion"]
+
+
+def test_marketplace_keeps_its_own_copy_of_catalog() -> None:
+    """Adding to the list passed in does not change the marketplace."""
+    catalog = [make_product("A")]
+    market = Marketplace(catalog)
+    catalog.append(make_product("B"))
+    assert [p.product_id for p in market.catalog] == ["A"]
+
+
+def test_search_matches_brand_or_name_for_one_species_ignoring_case() -> None:
+    """Search filters by species, then looks for the query in brand or name."""
+    lamb = make_product("A", brand="Barkley Farms", name="Lamb Adult")
+    senior = make_product("B", brand="Tailwind", name="Lamb Senior")
+    cat = make_product("C", species="cat", brand="Barkley Farms", name="Lamb Cat")
+    market = Marketplace([lamb, senior, cat])
+
+    assert market.search("DOG", "barkley") == [lamb]
+    assert market.search("dog", "LAMB") == [lamb, senior]
+    assert market.search("dog", "") == [lamb, senior]
+
+
+# --- Food Marketplace: recommendations ---
+
+def test_recommend_never_includes_allergens_or_wrong_species(home: Home) -> None:
+    """Hard exclusions: only dog food, and nothing with an allergen Mochi has (any case)."""
+    home.mochi.health.allergies.append("Chicken")
+    market = Marketplace(SAMPLE_CATALOG)
+    assert any(p.species == "dog" and "chicken" in p.allergens for p in SAMPLE_CATALOG)
+
+    recommended = market.recommend_for(home.mochi, len(SAMPLE_CATALOG))
+
+    expected = {p.product_id for p in SAMPLE_CATALOG
+                if p.species == "dog" and "chicken" not in p.allergens}
+    assert {p.product_id for p in recommended} == expected
+
+
+def test_excluded_product_scores_zero_and_explains_why(home: Home) -> None:
+    """An unsafe product scores 0.0 and its only explanation is the exclusion."""
+    home.mochi.health.allergies.append("beef")
+    market = Marketplace()
+    beefy = make_product(allergens=("beef",))
+    cat_food = make_product(species="cat")
+
+    assert market.score(beefy, home.mochi) == 0.0
+    [reason] = market.explain_recommendation(beefy, home.mochi)
+    assert "beef" in reason and "allergic" in reason
+
+    assert market.score(cat_food, home.mochi) == 0.0
+    [reason] = market.explain_recommendation(cat_food, home.mochi)
+    assert "cat" in reason
+
+
+def test_senior_pet_ranks_senior_food_above_adult_food_when_all_else_ties() -> None:
+    """Same price and rating: the life-stage match decides, not catalog order or id."""
+    senior_pet = Pet("Biscuit", "dog", "Beagle", age_years=9, weight_kg=12.0)
+    adult_food = make_product("A", life_stage="adult")
+    senior_food = make_product("S", life_stage="senior")
+    market = Marketplace([adult_food, senior_food])
+
+    assert market.recommend_for(senior_pet, 2) == [senior_food, adult_food]
+    gap = market.score(senior_food, senior_pet) - market.score(adult_food, senior_pet)
+    assert gap == pytest.approx(2.0)
+
+
+def test_explain_lists_exactly_the_factors_score_used(home: Home) -> None:
+    """Every factor appears once, and the explained points add up to the score."""
+    home.mochi.health.conditions.extend(["joint health", "Sensitive Skin"])
+    market = Marketplace()
+    product = make_product(life_stage="all", rating=4.0, price=40.0,
+                           supports=("sensitive skin", "joint health", "digestion"))
+
+    lines = market.explain_recommendation(product, home.mochi)
+
+    assert [line.split(" (")[0] for line in lines] == [
+        "Supports joint health, one of Mochi's conditions",
+        "Supports sensitive skin, one of Mochi's conditions",
+        "Suitable for all life stages",
+        "Rated 4/5",
+        "Price $40.00",
+    ]
+    assert explained_points(lines) == [3.0, 3.0, 2.0, 1.6, 0.6]
+    assert sum(explained_points(lines)) == pytest.approx(market.score(product, home.mochi))
+
+
+def test_explain_leaves_out_factors_that_did_not_apply(home: Home) -> None:
+    """No condition and no life-stage match: only rating and price are listed."""
+    market = Marketplace()
+    product = make_product(life_stage="senior", supports=("joint health",))
+
+    lines = market.explain_recommendation(product, home.mochi)
+
+    assert len(lines) == 2
+    assert lines[0].startswith("Rated") and lines[1].startswith("Price")
+    assert sum(explained_points(lines)) == pytest.approx(market.score(product, home.mochi))
+
+
+@pytest.mark.parametrize("age, stage", [(0.99, "young"), (1, "adult"), (6.99, "adult"),
+                                        (7, "senior")])
+def test_life_stage_comes_from_age(age: float, stage: str) -> None:
+    """Under 1 is young, 1 to under 7 is adult, 7 and over is senior."""
+    pet = Pet("Pip", "dog", "Mixed", age_years=age, weight_kg=8.0)
+    lines = Marketplace().explain_recommendation(make_product(life_stage=stage), pet)
+    assert lines[0] == f"Made for {stage} pets, and Pip is {stage} (+2.00)"
+
+
+def test_cheaper_product_scores_higher_when_all_else_ties(home: Home) -> None:
+    """Price is a scored factor: lower price, higher score."""
+    market = Marketplace()
+    cheap, pricey = make_product(price=20.0), make_product(price=80.0)
+    assert market.score(cheap, home.mochi) > market.score(pricey, home.mochi)
+
+
+def test_recommend_for_returns_at_most_top_n(home: Home) -> None:
+    """top_n caps the list; zero or less gives an empty list."""
+    market = Marketplace(SAMPLE_CATALOG)
+    assert len(market.recommend_for(home.mochi, 2)) == 2
+    assert market.recommend_for(home.mochi, 0) == []
+
+
+def test_compare_includes_kcal_and_skips_unknown_ids() -> None:
+    """compare() keeps the requested order, skips unknown ids, and shows kcal_per_cup."""
+    rows = Marketplace(SAMPLE_CATALOG).compare(["C03", "NOPE", "D01"])
+
+    assert [row["product_id"] for row in rows] == ["C03", "D01"]
+    assert rows[0]["kcal_per_cup"] == 350
+    assert rows[1]["brand"] == "Barkley Farms"
+
+
+# --- Food Marketplace: cart, payment, orders ---
+
+class DecliningPayment(MockPayment):
+    """A payment that always fails, to test checkout's declined-charge path."""
+
+    def charge(self, amount: float) -> bool:
+        """Decline every charge."""
+        return False
+
+
+def test_cart_item_subtotal_is_price_times_quantity() -> None:
+    """Subtotal multiplies price by quantity."""
+    assert CartItem(make_product(price=12.5), 3).subtotal() == 37.5
+
+
+def test_add_item_merges_quantity_for_same_product() -> None:
+    """Adding a product already in the cart raises its quantity instead of adding a line."""
+    cart = Cart()
+    product = make_product()
+    cart.add_item(product, 1)
+    cart.add_item(product, 2)
+
+    assert len(cart.items) == 1
+    assert cart.items[0].quantity == 3
+
+
+@pytest.mark.parametrize("quantity", [0, -1])
+def test_add_item_rejects_quantity_below_one(quantity: int) -> None:
+    """Quantity must be at least 1; nothing is added."""
+    cart = Cart()
+    with pytest.raises(ValueError):
+        cart.add_item(make_product(), quantity)
+    assert cart.items == []
+
+
+def test_remove_item_reports_whether_it_was_there() -> None:
+    """remove_item returns True once, then False."""
+    cart = Cart()
+    cart.add_item(make_product("A"), 1)
+    assert cart.remove_item("A") is True
+    assert cart.remove_item("A") is False
+
+
+def test_cart_total_sums_subtotals() -> None:
+    """2 x $10.99 + 1 x $4.50 = $26.48."""
+    cart = Cart()
+    cart.add_item(make_product("A", price=10.99), 2)
+    cart.add_item(make_product("B", price=4.50), 1)
+    assert cart.total() == 26.48
+
+
+def test_clear_empties_the_cart() -> None:
+    """clear() removes every item."""
+    cart = Cart()
+    cart.add_item(make_product(), 1)
+    cart.clear()
+    assert cart.items == []
+    assert cart.total() == 0
+
+
+def test_mock_payment_charges_only_positive_amounts() -> None:
+    """The fake processor accepts any amount above zero."""
+    payment = MockPayment()
+    assert payment.charge(10.0) is True
+    assert payment.charge(0) is False
+    assert payment.charge(-5.0) is False
+
+
+def test_checkout_raises_on_empty_cart(home: Home) -> None:
+    """An empty cart cannot be checked out."""
+    with pytest.raises(ValueError):
+        home.owner.cart.checkout(home.owner, MockPayment(), "Mochi", DAY)
+    assert home.owner.orders == []
+
+
+def test_checkout_raises_on_unknown_pet_and_changes_nothing(home: Home) -> None:
+    """The delivery task needs a real pet; the cart is left as it was."""
+    cart = home.owner.cart
+    cart.add_item(make_product(), 1)
+
+    with pytest.raises(ValueError):
+        cart.checkout(home.owner, MockPayment(), "Rex", DAY)
+    assert len(cart.items) == 1
+    assert home.owner.orders == []
+
+
+def test_checkout_raises_on_declined_charge_and_changes_nothing(home: Home) -> None:
+    """A declined charge leaves the cart, orders, and pet tasks untouched."""
+    cart = home.owner.cart
+    cart.add_item(make_product(), 1)
+
+    with pytest.raises(ValueError):
+        cart.checkout(home.owner, DecliningPayment(), "Mochi", DAY)
+    assert len(cart.items) == 1
+    assert home.owner.orders == []
+    assert home.mochi.get_tasks() == []
+
+
+def test_checkout_creates_order_with_delivery_task_and_clears_cart(home: Home) -> None:
+    """ORD-0001, delivery in 3 days, a DELIVERY task on the pet, and an empty cart."""
+    home.owner.address = "12 Elm Street"
+    cart = home.owner.cart
+    cart.add_item(make_product(price=25.0), 2)
+
+    order = cart.checkout(home.owner, MockPayment(), "mochi", DAY)  # any case finds Mochi
+
+    assert order.order_id == "ORD-0001"
+    assert order.total == 50.0
+    assert order.status is OrderStatus.PLACED
+    assert order.placed_on == DAY
+    assert order.delivery_date == DAY + timedelta(days=3)
+    assert order.delivery_address == "12 Elm Street"
+    assert home.owner.orders == [order]
+    assert cart.items == []
+
+    [delivery] = home.mochi.get_tasks()
+    assert delivery.task_type is TaskType.DELIVERY
+    assert delivery.due_date == DAY + timedelta(days=3)
+    assert delivery.pet_name == "Mochi"
+    assert "ORD-0001" in delivery.description
+
+
+def test_checkout_order_keeps_items_after_cart_cleared(home: Home) -> None:
+    """The order holds its own copy of the items, so clearing the cart doesn't empty it."""
+    cart = home.owner.cart
+    cart.add_item(make_product("A"), 1)
+
+    order = cart.checkout(home.owner, MockPayment(), "Mochi", DAY)
+
+    assert cart.items == []
+    assert order.items is not cart.items
+    assert [item.product.product_id for item in order.items] == ["A"]
+
+
+def test_second_checkout_gets_the_next_order_id(home: Home) -> None:
+    """Order ids count up from the number of orders placed."""
+    cart = home.owner.cart
+    cart.add_item(make_product("A"), 1)
+    cart.checkout(home.owner, MockPayment(), "Mochi", DAY)
+    cart.add_item(make_product("A"), 1)
+
+    second = cart.checkout(home.owner, MockPayment(), "Luna", DAY)
+
+    assert second.order_id == "ORD-0002"
+    assert len(home.owner.orders) == 2
+
+
+def make_order() -> Order:
+    """A freshly placed order."""
+    return Order(order_id="ORD-0001", total=10.0, placed_on=DAY,
+                 delivery_date=DAY + timedelta(days=3), delivery_address="12 Elm Street")
+
+
+def test_advance_status_goes_placed_shipped_delivered_then_false() -> None:
+    """PLACED -> SHIPPED -> DELIVERED, then it stays DELIVERED and returns False."""
+    order = make_order()
+
+    assert order.advance_status() is True
+    assert order.status is OrderStatus.SHIPPED
+    assert order.advance_status() is True
+    assert order.status is OrderStatus.DELIVERED
+    assert order.advance_status() is False
+    assert order.status is OrderStatus.DELIVERED
+
+
+def test_to_delivery_task_is_a_one_time_delivery_on_the_delivery_date() -> None:
+    """The delivery task is due on the delivery date and does not repeat."""
+    task = make_order().to_delivery_task("Mochi")
+
+    assert task.task_type is TaskType.DELIVERY
+    assert task.due_date == DAY + timedelta(days=3)
+    assert task.frequency is Frequency.ONCE
+    assert task.pet_name == "Mochi"

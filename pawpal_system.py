@@ -1,7 +1,7 @@
 """PawPal+ logic layer: owners, pets, tasks, scheduling, health tracking, and a food marketplace.
 
-Built from diagrams/uml.mmd. Core scheduling and the health tracker are implemented;
-marketplace methods are still stubs.
+Built from diagrams/uml.mmd. Core scheduling, the health tracker, and the food
+marketplace are implemented; save and load are still stubs.
 """
 
 from __future__ import annotations
@@ -761,6 +761,32 @@ class Scheduler:
 # Food Marketplace
 # ---------------------------------------------------------------------------
 
+# Life stages a product can target. A pet's own stage is never "all".
+_LIFE_STAGES = ("young", "adult", "senior", "all")
+
+# Recommendation score weights. Health comes first: one matching condition (3)
+# outweighs a life-stage match (2) or a perfect rating (2) on its own.
+_CONDITION_POINTS = 3.0  # per pet condition the product supports
+_LIFE_STAGE_POINTS = 2.0  # product made for the pet's stage, or for "all"
+_RATING_POINTS = 2.0  # scaled by rating / 5
+_PRICE_POINTS = 1.0  # scaled by how far below _PRICE_CEILING the price is
+_PRICE_CEILING = 100.0  # every SAMPLE_CATALOG price stays below this
+
+# Every food order is delivered this many days after it is placed.
+_DELIVERY_DAYS = 3
+_DELIVERY_TIME = "12:00"
+_DELIVERY_MINUTES = 10
+
+
+def _life_stage(age_years: float) -> str:
+    """Return "young" under 1 year, "adult" from 1 to under 7, and "senior" from 7."""
+    if age_years < 1:
+        return "young"
+    if age_years < 7:
+        return "adult"
+    return "senior"
+
+
 @dataclass
 class FoodProduct:
     """A food product in the simulated store."""
@@ -776,6 +802,46 @@ class FoodProduct:
     supports: list[str] = field(default_factory=list)
     allergens: list[str] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        """Store species lowercase, check the life stage, and copy the lists."""
+        self.species = self.species.lower()
+        if self.life_stage not in _LIFE_STAGES:
+            raise ValueError(
+                f"life_stage must be one of {', '.join(_LIFE_STAGES)}, got {self.life_stage!r}"
+            )
+        self.supports = list(self.supports)
+        self.allergens = list(self.allergens)
+
+
+# Fictional brands only. Every price is below _PRICE_CEILING (tested).
+SAMPLE_CATALOG: list[FoodProduct] = [
+    FoodProduct("D01", "Barkley Farms", "Lamb & Rice Adult", "dog", "adult", 42.99, 4.5, 380,
+                supports=["sensitive skin", "digestion"]),
+    FoodProduct("D02", "Barkley Farms", "Chicken Feast Puppy", "dog", "young", 38.50, 4.3, 410,
+                supports=["digestion"], allergens=["chicken"]),
+    FoodProduct("D03", "Tailwind Kitchen", "Golden Years Joint Care", "dog", "senior",
+                54.00, 4.7, 340, supports=["joint health", "weight control"],
+                allergens=["chicken"]),
+    FoodProduct("D04", "Tailwind Kitchen", "Salmon Skin & Coat", "dog", "all", 61.25, 4.6, 360,
+                supports=["sensitive skin"], allergens=["fish"]),
+    FoodProduct("D05", "Muttley & Co.", "Beef Hearty Bites", "dog", "adult", 29.99, 4.0, 400,
+                allergens=["beef", "grain"]),
+    FoodProduct("D06", "Muttley & Co.", "Lite Turkey Formula", "dog", "adult", 34.75, 4.1, 320,
+                supports=["weight control"]),
+    FoodProduct("D07", "Fernhollow", "Senior Gentle Duck", "dog", "senior", 47.50, 4.4, 330,
+                supports=["joint health", "digestion"]),
+    FoodProduct("C01", "Purrfect Bowl", "Ocean Whitefish Adult", "cat", "adult", 32.99, 4.4, 390,
+                supports=["urinary health"], allergens=["fish"]),
+    FoodProduct("C02", "Purrfect Bowl", "Kitten Chicken Starter", "cat", "young", 27.50, 4.6, 420,
+                supports=["digestion"], allergens=["chicken"]),
+    FoodProduct("C03", "Whiskerwell", "Urinary Care Turkey", "cat", "adult", 44.00, 4.5, 350,
+                supports=["urinary health"]),
+    FoodProduct("C04", "Whiskerwell", "Senior Vitality Tuna", "cat", "senior", 39.99, 4.2, 340,
+                supports=["joint health", "weight control"], allergens=["fish"]),
+    FoodProduct("C05", "Nibble Lane", "Indoor Rabbit Recipe", "cat", "all", 49.95, 4.8, 370,
+                supports=["weight control", "sensitive skin"]),
+]
+
 
 @dataclass
 class CartItem:
@@ -786,7 +852,14 @@ class CartItem:
 
     def subtotal(self) -> float:
         """Return price times quantity."""
-        raise NotImplementedError
+        return round(self.product.price * self.quantity, 2)
+
+
+# Each status and the one that follows it. DELIVERED has no next status.
+_NEXT_STATUS: dict[OrderStatus, OrderStatus] = {
+    OrderStatus.PLACED: OrderStatus.SHIPPED,
+    OrderStatus.SHIPPED: OrderStatus.DELIVERED,
+}
 
 
 @dataclass(kw_only=True)
@@ -803,11 +876,24 @@ class Order:
 
     def advance_status(self) -> bool:
         """Move PLACED to SHIPPED to DELIVERED; return False if it cannot advance."""
-        raise NotImplementedError
+        next_status = _NEXT_STATUS.get(self.status)
+        if next_status is None:
+            return False
+        self.status = next_status
+        return True
 
     def to_delivery_task(self, pet_name: str) -> Task:
         """Create a DELIVERY task on the delivery date."""
-        raise NotImplementedError
+        return Task(
+            f"Food delivery ({self.order_id})",
+            _DELIVERY_TIME,
+            self.delivery_date,
+            TaskType.DELIVERY,
+            frequency=Frequency.ONCE,
+            priority=Priority.MEDIUM,
+            duration_minutes=_DELIVERY_MINUTES,
+            pet_name=pet_name,
+        )
 
 
 class MockPayment:
@@ -815,7 +901,9 @@ class MockPayment:
 
     def charge(self, amount: float) -> bool:
         """Return True if the amount is greater than zero."""
-        raise NotImplementedError
+        # Simulated only: no card number, CVV, or any other payment detail is
+        # requested, accepted, or stored anywhere.
+        return amount > 0
 
 
 class Cart:
@@ -826,26 +914,59 @@ class Cart:
         self.items: list[CartItem] = []
 
     def add_item(self, product: FoodProduct, quantity: int) -> None:
-        """Add a product to the cart."""
-        raise NotImplementedError
+        """Add a product to the cart, or raise its quantity if it is already there."""
+        if quantity < 1:
+            raise ValueError(f"quantity must be at least 1, got {quantity}")
+        for item in self.items:
+            if item.product.product_id == product.product_id:
+                item.quantity += quantity
+                return
+        self.items.append(CartItem(product, quantity))
 
     def remove_item(self, product_id: str) -> bool:
         """Remove a product from the cart; return True if it was there."""
-        raise NotImplementedError
+        for item in self.items:
+            if item.product.product_id == product_id:
+                self.items.remove(item)
+                return True
+        return False
 
     def total(self) -> float:
         """Return the sum of all item subtotals."""
-        raise NotImplementedError
+        return round(sum(item.subtotal() for item in self.items), 2)
 
     def clear(self) -> None:
         """Empty the cart."""
-        raise NotImplementedError
+        self.items.clear()
 
     def checkout(
         self, owner: Owner, payment: MockPayment, pet_name: str, today: date
     ) -> Order:
         """Charge, create an Order with a delivery task for the pet, and clear the cart."""
-        raise NotImplementedError
+        # Every check runs before anything changes, so a failed checkout leaves
+        # the cart, the owner's orders, and the pet's tasks exactly as they were.
+        if not self.items:
+            raise ValueError("Cannot check out an empty cart")
+        pet = owner.get_pet(pet_name)
+        if pet is None:
+            raise ValueError(f"No pet named '{pet_name}'")
+        total = self.total()
+        if not payment.charge(total):
+            raise ValueError(f"Payment of ${total:.2f} was declined")
+
+        order = Order(
+            # Orders are never deleted, so the count gives a unique, increasing ID.
+            order_id=f"ORD-{len(owner.orders) + 1:04d}",
+            items=list(self.items),  # a copy: clear() below must not empty the order
+            total=total,
+            placed_on=today,
+            delivery_date=today + timedelta(days=_DELIVERY_DAYS),
+            delivery_address=owner.address,
+        )
+        pet.add_task(order.to_delivery_task(pet.name))
+        owner.orders.append(order)
+        self.clear()
+        return order
 
 
 class Marketplace:
@@ -853,24 +974,89 @@ class Marketplace:
 
     def __init__(self, catalog: Optional[list[FoodProduct]] = None) -> None:
         """Create a marketplace with a product catalog."""
-        self.catalog: list[FoodProduct] = catalog if catalog is not None else []
+        self.catalog: list[FoodProduct] = list(catalog or [])
 
     def search(self, species: str, query: str) -> list[FoodProduct]:
         """Return products for a species whose name or brand matches the query."""
-        raise NotImplementedError
+        species, query = species.lower(), query.lower()
+        return [
+            p for p in self.catalog
+            if p.species == species
+            and (query in p.name.lower() or query in p.brand.lower())
+        ]
+
+    def _exclusion_reason(self, product: FoodProduct, pet: Pet) -> Optional[str]:
+        """Return why a product is unsafe for a pet (wrong species or allergen), or None."""
+        if product.species != pet.species:
+            return f"Excluded: made for {product.species}s, but {pet.name} is a {pet.species}."
+        allergies = {a.lower() for a in pet.health.allergies}
+        for allergen in product.allergens:
+            if allergen.lower() in allergies:
+                return f"Excluded: contains {allergen}, and {pet.name} is allergic to it."
+        return None
+
+    def _score_factors(self, product: FoodProduct, pet: Pet) -> list[tuple[str, float]]:
+        """Return (reason, points) for every factor in a safe product's score."""
+        # The single source of truth: score() sums these points and
+        # explain_recommendation() prints them, so the two can never disagree.
+        # Points are rounded here so the printed points add up to the score exactly.
+        factors: list[tuple[str, float]] = []
+
+        supports = {s.lower() for s in product.supports}
+        # dict.fromkeys drops repeated conditions but keeps the pet's order.
+        for condition in dict.fromkeys(c.lower() for c in pet.health.conditions):
+            if condition in supports:
+                factors.append((f"Supports {condition}, one of {pet.name}'s conditions",
+                                _CONDITION_POINTS))
+
+        stage = _life_stage(pet.age_years)
+        if product.life_stage == stage:
+            factors.append((f"Made for {stage} pets, and {pet.name} is {stage}",
+                            _LIFE_STAGE_POINTS))
+        elif product.life_stage == "all":
+            factors.append(("Suitable for all life stages", _LIFE_STAGE_POINTS))
+
+        factors.append((f"Rated {product.rating:g}/5",
+                         round(_RATING_POINTS * product.rating / 5, 2)))
+        price_share = max(0.0, 1 - product.price / _PRICE_CEILING)
+        factors.append((f"Price ${product.price:.2f}", round(_PRICE_POINTS * price_share, 2)))
+        return factors
 
     def score(self, product: FoodProduct, pet: Pet) -> float:
-        """Return how well a product fits a pet."""
-        raise NotImplementedError
+        """Return how well a product fits a pet (0.0 if it is unsafe for the pet)."""
+        if self._exclusion_reason(product, pet) is not None:
+            return 0.0
+        return round(sum(points for _, points in self._score_factors(product, pet)), 2)
 
     def recommend_for(self, pet: Pet, top_n: int) -> list[FoodProduct]:
         """Return the top-scoring safe products for a pet."""
-        raise NotImplementedError
+        safe = [p for p in self.catalog if self._exclusion_reason(p, pet) is None]
+        # Ties go to the cheaper product, then the product id, so results are stable.
+        ranked = sorted(safe, key=lambda p: (-self.score(p, pet), p.price, p.product_id))
+        return ranked[:max(top_n, 0)]
 
     def explain_recommendation(self, product: FoodProduct, pet: Pet) -> list[str]:
         """Return the exact factors score() used for this product and pet."""
-        raise NotImplementedError
+        reason = self._exclusion_reason(product, pet)
+        if reason is not None:
+            return [reason]
+        return [f"{text} ({points:+.2f})" for text, points in self._score_factors(product, pet)]
 
     def compare(self, product_ids: list[str]) -> list[dict]:
         """Return a side-by-side comparison of the given products."""
-        raise NotImplementedError
+        by_id = {p.product_id: p for p in self.catalog}
+        return [
+            {
+                "product_id": p.product_id,
+                "brand": p.brand,
+                "name": p.name,
+                "species": p.species,
+                "life_stage": p.life_stage,
+                "price": p.price,
+                "rating": p.rating,
+                "kcal_per_cup": p.kcal_per_cup,
+                "supports": list(p.supports),
+                "allergens": list(p.allergens),
+            }
+            for p in (by_id[pid] for pid in product_ids if pid in by_id)
+        ]

@@ -3,8 +3,12 @@
 from datetime import date, datetime, time, timedelta
 
 from pawpal_system import (
+    SAMPLE_CATALOG,
     Frequency,
+    HealthProfile,
+    Marketplace,
     Medication,
+    MockPayment,
     Owner,
     Pet,
     Priority,
@@ -18,7 +22,10 @@ TASK_HEADERS = ["Time", "Pet", "Task", "Type", "Duration", "Priority"]
 READING_HEADERS = ["Time", "Heart rate", "SpO2", "Temp", "Breathing", "Sleep",
                    "Steps", "km", "kcal", "Battery"]
 # Every column except the first (time) is a number.
-RIGHT_ALIGNED = {"Duration", *READING_HEADERS[1:]}
+COMPARE_HEADERS = ["ID", "Brand", "Name", "Stage", "Price", "Rating", "kcal/cup"]
+CART_HEADERS = ["ID", "Product", "Qty", "Price", "Subtotal"]
+RIGHT_ALIGNED = {"Duration", *READING_HEADERS[1:], "Price", "Rating", "kcal/cup", "Qty",
+                 "Subtotal"}
 VET_DISCLAIMER = "Not veterinary advice. Contact your vet if you are worried."
 
 
@@ -32,8 +39,11 @@ def build_demo_owner(today: date) -> Owner:
         preferred_types=[TaskType.WALK],
     )
 
-    mochi = Pet("Mochi", "Dog", "Shiba Inu", age_years=3, weight_kg=10.5)
-    luna = Pet("Luna", "Cat", "Tabby", age_years=6, weight_kg=4.2)
+    # Each pet has an allergy that rules out some of its own species' food in the shop.
+    mochi = Pet("Mochi", "Dog", "Shiba Inu", age_years=3, weight_kg=10.5,
+                health=HealthProfile(conditions=["sensitive skin"], allergies=["chicken"]))
+    luna = Pet("Luna", "Cat", "Tabby", age_years=6, weight_kg=4.2,
+               health=HealthProfile(conditions=["urinary health"], allergies=["fish"]))
     owner.add_pet(mochi)
     owner.add_pet(luna)
 
@@ -166,6 +176,9 @@ def main() -> None:
     print_heading("9. Health")
     show_health(owner, today)
 
+    print_heading("10. Shop")
+    show_shop(owner, scheduler, today)
+
 
 def show_health(owner: Owner, today: date) -> None:
     """Pair a seeded collar to Mochi, sync three readings, and show Luna's medication."""
@@ -223,6 +236,72 @@ def show_health(owner: Owner, today: date) -> None:
               f"(from {med.start_date:%B %d})")
     print("Reminders added to her schedule by add_medication():")
     print_tasks([t for t in luna.get_tasks() if t.task_type is TaskType.MEDICATION])
+
+
+def show_shop(owner: Owner, scheduler: Scheduler, today: date) -> None:
+    """Recommend safe food for each pet, compare products, and place a simulated order."""
+    market = Marketplace(SAMPLE_CATALOG)
+
+    for pet in owner.pets:
+        print(f"\nTop 3 for {pet.name} ({pet.species}, conditions: "
+              f"{', '.join(pet.health.conditions) or 'none'}, allergies: "
+              f"{', '.join(pet.health.allergies) or 'none'}):")
+        for rank, product in enumerate(market.recommend_for(pet, 3), start=1):
+            print(f"{rank}. [{product.product_id}] {product.brand} {product.name}, "
+                  f"${product.price:.2f}: score {market.score(product, pet):.2f}")
+            for line in market.explain_recommendation(product, pet):
+                print(f"   - {line}")
+
+        # Same-species products that never appear in any recommendation were excluded.
+        safe = market.recommend_for(pet, len(market.catalog))
+        excluded = [p for p in market.search(pet.species, "") if p not in safe]
+        print(f"Excluded for {pet.name}:")
+        for product in excluded:
+            [reason] = market.explain_recommendation(product, pet)
+            print(f"- [{product.product_id}] {product.brand} {product.name}: {reason}")
+
+    print('\nSearch dog food for "tailwind":')
+    for product in market.search("dog", "tailwind"):
+        print(f"- [{product.product_id}] {product.brand} {product.name}")
+
+    print("\nCompare D01, D06, C03 (kcal is shown here only; it is not scored):")
+    print_table(COMPARE_HEADERS, [
+        [row["product_id"], row["brand"], row["name"], row["life_stage"],
+         f"${row['price']:.2f}", f"{row['rating']:g}", str(row["kcal_per_cup"])]
+        for row in market.compare(["D01", "D06", "C03"])
+    ])
+
+    mochi = owner.get_pet("Mochi")
+    if mochi is None:
+        return
+    favourite = market.recommend_for(mochi, 1)[0]
+    cart = owner.cart
+    cart.add_item(favourite, 1)
+    cart.add_item(favourite, 1)  # same product again: quantity becomes 2, not a new line
+    cart.add_item(market.search("dog", "lite turkey")[0], 1)
+    print("\nCart (the first product was added twice, so its quantity merged):")
+    print_table(CART_HEADERS, [
+        [item.product.product_id, f"{item.product.brand} {item.product.name}",
+         str(item.quantity), f"${item.product.price:.2f}", f"${item.subtotal():.2f}"]
+        for item in cart.items
+    ])
+    print(f"Total: ${cart.total():.2f}")
+
+    # MockPayment is simulated: no card number or other payment detail is asked for or stored.
+    order = cart.checkout(owner, MockPayment(), mochi.name, today)
+    print(f"\nOrder {order.order_id} placed on {order.placed_on:%B %d} for ${order.total:.2f}, "
+          f"delivering to {order.delivery_address} on {order.delivery_date:%A, %B %d}.")
+    print(f"Cart after checkout: {len(cart.items)} items. "
+          f"Order still holds {len(order.items)} line items.")
+
+    print(f"\nTasks on {order.delivery_date:%A, %B %d} (checkout added the delivery):")
+    print_tasks(scheduler.get_todays_schedule(order.delivery_date))
+
+    print("\nOrder status:")
+    print(f"- {order.status.value}")
+    while order.advance_status():
+        print(f"- {order.status.value}")
+    print(f"advance_status() at {order.status.value} returns False.")
 
 
 if __name__ == "__main__":

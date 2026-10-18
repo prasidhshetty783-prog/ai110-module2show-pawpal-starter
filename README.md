@@ -101,17 +101,16 @@ python -m pytest        # run the suite
 python -m pytest -v     # see each test by name
 ```
 
-**89 tests, all passing.** The suite covers validation (time format, owner hours and
+**124 tests, all passing.** The suite covers validation (time format, owner hours and
 time budget, duplicate pets and tasks, safe edits that leave the original unchanged),
 sorting and filtering across pets, conflict warnings (completed tasks ignored), daily
 and weekly recurrence (including month/year rollover and no duplicate copies), and every
 daily-planner rule: time budget, priority, preferred types, waking hours, the medication
 rule, and skip-then-fit. It also covers the Health Tracker: seeded collar readings,
-pairing rules, species-aware alerts, daily summaries, and medication reminders.
+pairing rules, species-aware alerts, daily summaries, and medication reminders. And the Food Marketplace: allergen and species safety, scoring and explanations that always agree, cart quantities and totals, all-or-nothing checkout, and order status.
 
-**Confidence: ★★★★☆.** Every scheduling and Health Tracker rule has a test, including
-the edge cases right at its boundaries. One star off because the Streamlit UI is tested
-by hand, and the Food Marketplace gets its tests when it's built.
+**Confidence: ★★★★☆.** Every scheduling, Health Tracker, and Marketplace rule has a test, including
+the edge cases right at its boundaries. One star off because the Streamlit UI is tested by hand.
 
 **Known limitations** (by design, and tested as such): conflicts are flagged only for the
 exact same date and time; a recurring task's next copy is created only when the current
@@ -120,11 +119,11 @@ one is marked complete; overnight hours (e.g. 22:00–06:00) aren't supported.
 Sample test output:
 ```
 platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
-collected 89 items
+collected 124 items
 
 tests\test_pawpal.py ........................................................ [100%]
 
-============================== 89 passed in 0.32s ==============================
+============================== 124 passed in 0.32s ==============================
 ```
 
 ## 📐 Smarter Scheduling
@@ -187,5 +186,23 @@ built and tested without hardware.
 **Design decision:** the collar knows its species. At first it produced dog-range values
 for every pet, so every cat would have triggered a heart-rate alarm. (A cat's normal range
 is 140–220 bpm, and the dog range tops out at 140.)
+
+## 🛒 Food Marketplace (simulated)
+
+A pretend store with 12 products from **fictional brands**. No real store, and no real
+payment: `MockPayment` never asks for or stores card details.
+
+| Feature | Method(s) | Notes |
+|---------|-----------|-------|
+| Recommendations | `Marketplace.recommend_for(pet, top_n)` | First removes the wrong species and anything containing one of the pet's allergens. Then scores the rest and returns the best. |
+| Scoring | `Marketplace.score()` | +3 per health condition the food supports, +2 for a life-stage match (young / adult / senior, or "all"), up to +2 for rating, up to +1 for a lower price. Life stage is scored, not filtered. |
+| Explanations | `Marketplace.explain_recommendation()` | One line per factor with its points. The points always add up to the score, because both read the same private list. Excluded products say why ("contains chicken, and Mochi is allergic to it"). |
+| Search & compare | `Marketplace.search()`, `Marketplace.compare()` | Search by brand or name for one species. Compare shows price, rating, and calories per cup side by side (calories aren't scored). |
+| Cart | `Cart.add_item()`, `remove_item()`, `total()` | Adding the same product again increases its quantity. |
+| Checkout | `Cart.checkout(owner, payment, pet_name, today)` | Checks everything first (empty cart, unknown pet, declined payment), so a failed checkout changes nothing. Creates order `ORD-0001`, delivery in 3 days, and adds a delivery task to the pet's schedule. |
+| Order tracking | `Order.advance_status()` | placed → shipped → delivered. |
+
+**Design decision:** recommendations are a third scheduling-style algorithm (filter, then
+rank, then explain), built in agent mode. See `ai_interactions.md`.
 
 **Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->

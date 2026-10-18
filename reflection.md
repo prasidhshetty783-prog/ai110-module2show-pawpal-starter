@@ -349,7 +349,7 @@ I used Claude in two roles:
 
 **a. What you tested**
 
-89 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
+124 automated tests (`python -m pytest`), all passing. Every test uses fixed dates
 (October 15, 2026), so the results never depend on what day I run them.
 
 - **Validation:** times like "9:00", "24:00", and "07:60" are rejected; owner hours must
@@ -383,6 +383,15 @@ I used Claude in two roles:
   not for a cat; SpO2 of 94% alerts; a rabbit gets no alerts; daily totals come from the
   latest reading, not a sum; a medication with two dose times makes two HIGH reminder
   tasks that the planner keeps; a duplicate dose means nothing gets added.
+- **Food Marketplace:** allergen and wrong-species products are never recommended; a
+  senior pet ranks senior food above adult food when everything else ties; the points in
+  each explanation add up exactly to the score; every catalog price is under $100 (the
+  price score assumes it); adding the same product twice merges the quantity, and 0 is
+  rejected; checkout fails cleanly on an empty cart, an unknown pet, or a declined
+  payment, leaving the cart and orders unchanged; a successful checkout creates ORD-0001
+  with delivery 3 days out, adds the delivery task, and clears the cart; the order keeps
+  its items after the cart is cleared; a second checkout gets ORD-0002; status goes
+  placed → shipped → delivered, then stops.
 
 **Why these tests matter:** they guard the mistakes that would look fine on screen but
 quietly let the owner down: a skipped medication, a plan over the owner's time, a LOW
@@ -393,9 +402,9 @@ skipped every task. I fixed both and added tests for them.
 
 **b. Confidence**
 
-★★★★☆ (4/5). All 89 tests pass, and every scheduling and Health Tracker rule is tested,
-including the edge cases right at its boundaries. One star off because the Streamlit UI
-is checked by hand and the Food Marketplace isn't built yet.
+★★★★☆ (4/5). All 124 tests pass, and every scheduling, Health Tracker, and Marketplace
+rule is tested, including the edge cases right at its boundaries. One star off because
+the Streamlit UI is only checked by hand.
 
 **Edge cases I'd test next:**
 
